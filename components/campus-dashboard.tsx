@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -88,6 +88,28 @@ type AiPresentation =
 
 type FaultMode = 'none' | 'invalid_json' | 'rule_999' | 'timeout';
 
+type WebMcpTool = {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
+  execute(input: unknown): unknown;
+};
+
+type WebMcpContext = {
+  registerTool(
+    tool: WebMcpTool,
+    options?: { signal?: AbortSignal },
+  ): void | Promise<void>;
+};
+
+declare global {
+  interface Document {
+    readonly modelContext?: WebMcpContext;
+  }
+}
+
 const statusMeta: Record<CaseStatus, { label: string; progress: number; step: number }> = {
   draft: { label: '草稿', progress: 25, step: 0 },
   submitted: { label: '已提交', progress: 50, step: 1 },
@@ -135,6 +157,11 @@ export function CampusDashboard() {
   const [faultMode, setFaultMode] = useState<FaultMode>('none');
   const [busy, setBusy] = useState<string | null>('initial');
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const applicationRef = useRef(application);
+
+  useEffect(() => {
+    applicationRef.current = application;
+  }, [application]);
 
   const applySnapshot = useCallback((next: DemoSnapshot) => {
     setSnapshot(next);
@@ -159,6 +186,112 @@ export function CampusDashboard() {
         .finally(() => setBusy(null));
     }, 0);
     return () => window.clearTimeout(timer);
+  }, [reload]);
+
+  useEffect(() => {
+    const context = document.modelContext;
+    if (!context?.registerTool) return;
+    const lifecycle = new AbortController();
+    const options = { signal: lifecycle.signal };
+    const tools: WebMcpTool[] = [
+      {
+        name: 'get_case_snapshot',
+        title: '读取当前申请',
+        description: '读取当前演示申请的正式状态、版本号、场地和最近事件，不改变任何数据。',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        annotations: { readOnlyHint: true, untrustedContentHint: false },
+        async execute() {
+          const current = await fetchJson<DemoSnapshot>('/api/demo');
+          return {
+            caseId: current.case.id,
+            status: current.case.status,
+            version: current.case.currentVersion,
+            activityName: current.application.activityName,
+            venueId: current.application.venueId,
+            eventCount: current.events.length,
+          };
+        },
+      },
+      {
+        name: 'validate_current_application',
+        title: '预检当前申请',
+        description: '对页面中当前申请执行确定性规则预检，并把同一结果展示在页面中。',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        annotations: { readOnlyHint: true, untrustedContentHint: false },
+        async execute() {
+          const current = applicationRef.current;
+          if (!current) throw new Error('APPLICATION_NOT_READY');
+          const checked = await fetchJson<ValidationResult>('/api/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(applicationForRequest(current)),
+          });
+          setValidation(checked);
+          return {
+            passed: checked.passed,
+            results: checked.results.map((item) => ({
+              ruleId: item.ruleId,
+              passed: item.passed,
+              message: item.message,
+            })),
+          };
+        },
+      },
+      {
+        name: 'suggest_form_description',
+        title: '生成表单整理建议',
+        description: '为当前表单生成受约束的描述整理建议；只展示建议并记录运行，不会自动采纳或改变正式状态。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            faultMode: {
+              type: 'string',
+              enum: ['none', 'invalid_json', 'rule_999', 'timeout'],
+              default: 'none',
+            },
+          },
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false, untrustedContentHint: true },
+        async execute(input) {
+          const current = applicationRef.current;
+          if (!current) throw new Error('APPLICATION_NOT_READY');
+          const candidate = input as { faultMode?: FaultMode };
+          const selectedFault = candidate.faultMode ?? 'none';
+          if (!['none', 'invalid_json', 'rule_999', 'timeout'].includes(selectedFault)) {
+            throw new Error('INVALID_FAULT_MODE');
+          }
+          const result = await fetchJson<AgentResult<FormAssistOutput>>(
+            '/api/agent/form-assist',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                application: applicationForRequest(current),
+                faultMode: selectedFault,
+              }),
+            },
+          );
+          setAiPresentation({ kind: 'form', result });
+          await reload();
+          return result.ok
+            ? {
+                ok: true,
+                suggestion: result.output.suggestedDescription,
+                evidenceRefs: result.output.evidenceRefs,
+                requiresUserConfirmation: result.output.requiresUserConfirmation,
+              }
+            : { ok: false, errorCode: result.errorCode, fallback: result.fallback };
+        },
+      },
+    ];
+
+    void Promise.all(
+      tools.map((tool) => Promise.resolve(context.registerTool(tool, options))),
+    ).catch((error: unknown) => {
+      console.error('WebMCP tool registration failed', error);
+    });
+    return () => lifecycle.abort();
   }, [reload]);
 
   const venue = useMemo(
