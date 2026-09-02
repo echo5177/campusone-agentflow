@@ -167,8 +167,6 @@ export function CampusDashboard() {
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [activeSection, setActiveSection] = useState<DashboardSection>('application');
   const applicationRef = useRef(application);
-  const navigationIntentRef = useRef<DashboardSection | null>(null);
-  const navigationReleaseRef = useRef<number | null>(null);
   const dashboardReady = Boolean(snapshot && application);
 
   useEffect(() => {
@@ -187,11 +185,6 @@ export function CampusDashboard() {
     const syncActiveSection = () => {
       window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
-        if (navigationIntentRef.current) {
-          setActiveSection(navigationIntentRef.current);
-          return;
-        }
-
         const activationLine = window.scrollY + 97;
         const sections = sectionIds
           .map((id) => document.getElementById(id))
@@ -201,24 +194,31 @@ export function CampusDashboard() {
               left.getBoundingClientRect().top - right.getBoundingClientRect().top,
           );
 
-        const current = sections.reduce<DashboardSection>((selected, element) => {
+        let current = sections.reduce<DashboardSection>((selected, element) => {
           const elementTop = element.getBoundingClientRect().top + window.scrollY;
           return elementTop <= activationLine ? (element.id as DashboardSection) : selected;
         }, 'application');
+
+        const atPageBottom =
+          window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+        if (atPageBottom) {
+          const lastVisibleSection = sections.findLast((element) => {
+            const bounds = element.getBoundingClientRect();
+            return bounds.top < window.innerHeight && bounds.bottom > 65;
+          });
+          if (lastVisibleSection) current = lastVisibleSection.id as DashboardSection;
+        }
+
         setActiveSection(current);
       });
     };
 
     const hashSection = window.location.hash.slice(1);
     if (isDashboardSection(hashSection)) {
-      navigationIntentRef.current = hashSection;
       hashFrameId = window.requestAnimationFrame(() => {
         document.getElementById(hashSection)?.scrollIntoView();
         setActiveSection(hashSection);
       });
-      navigationReleaseRef.current = window.setTimeout(() => {
-        navigationIntentRef.current = null;
-      }, 800);
     }
 
     window.addEventListener('scroll', syncActiveSection, { passive: true });
@@ -229,25 +229,11 @@ export function CampusDashboard() {
     return () => {
       window.cancelAnimationFrame(frameId);
       window.cancelAnimationFrame(hashFrameId);
-      if (navigationReleaseRef.current !== null) {
-        window.clearTimeout(navigationReleaseRef.current);
-      }
       window.removeEventListener('scroll', syncActiveSection);
       window.removeEventListener('resize', syncActiveSection);
       window.removeEventListener('hashchange', syncActiveSection);
     };
   }, [dashboardReady]);
-
-  const selectSection = useCallback((section: DashboardSection) => {
-    navigationIntentRef.current = section;
-    if (navigationReleaseRef.current !== null) {
-      window.clearTimeout(navigationReleaseRef.current);
-    }
-    setActiveSection(section);
-    navigationReleaseRef.current = window.setTimeout(() => {
-      navigationIntentRef.current = null;
-    }, 800);
-  }, []);
 
   const applySnapshot = useCallback((next: DemoSnapshot) => {
     setSnapshot(next);
@@ -562,7 +548,7 @@ export function CampusDashboard() {
                 aria-current={activeSection === id ? 'location' : undefined}
                 className={`rounded-full px-3 py-1.5 transition-colors ${activeSection === id ? 'bg-teal-50 font-semibold text-teal-800 ring-1 ring-teal-200' : 'hover:bg-slate-100 hover:text-foreground'}`}
                 href={`#${id}`}
-                onClick={() => selectSection(id)}
+                onClick={() => setActiveSection(id)}
               >
                 {label}
               </a>
