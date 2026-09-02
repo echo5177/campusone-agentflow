@@ -36,4 +36,12 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/
-/work/
+/work/*
+!/work/documents/
+!/work/slides/
+/work/documents/*
+!/work/documents/build_docs.py
+/work/slides/*
+!/work/slides/build_deck.mjs
+!/work/slides/campusone-dashboard-viewport.png
+*.inspect.ndjson
