@@ -28,7 +28,17 @@ npm run db:local:apply
 npm run dev
 ```
 
-默认 `LLM_MODE=mock`，无需 API Key。切换真实模型时，在本地 `.env.local` 中设置 `LLM_MODE=live`、模型地址和密钥；不要提交 `.env.local`。
+默认 `LLM_MODE=mock`，无需 API Key。切换真实模型时，在本地 `.env.local` 中设置以下变量：
+
+```dotenv
+LLM_MODE=live
+LLM_API_BASE=https://api.deepseek.com
+LLM_API_KEY=<your-api-key>
+LLM_MODEL=deepseek-chat
+LLM_TIMEOUT_MS=12000
+```
+
+`.env.local` 已被 Git 忽略，不要把真实密钥写进 `.env.example`、源码、提交记录或浏览器端变量。线上站点使用同名的托管环境变量，其中 `LLM_API_KEY` 必须标记为 secret；修改线上变量后需要重新部署一个已保存版本才会生效。
 
 Conda 环境已定义在 `environment.yml`，可使用：
 
