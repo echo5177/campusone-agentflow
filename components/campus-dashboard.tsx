@@ -149,6 +149,14 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+const dashboardSections = [
+  { id: 'application', label: '场地申请' },
+  { id: 'timeline', label: '事务时间轴' },
+  { id: 'evidence', label: 'AI 运行证据' },
+] as const;
+
+type DashboardSection = (typeof dashboardSections)[number]['id'];
+
 export function CampusDashboard() {
   const [snapshot, setSnapshot] = useState<DemoSnapshot | null>(null);
   const [application, setApplication] = useState<VenueApplication | null>(null);
@@ -157,11 +165,89 @@ export function CampusDashboard() {
   const [faultMode, setFaultMode] = useState<FaultMode>('none');
   const [busy, setBusy] = useState<string | null>('initial');
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [activeSection, setActiveSection] = useState<DashboardSection>('application');
   const applicationRef = useRef(application);
+  const navigationIntentRef = useRef<DashboardSection | null>(null);
+  const navigationReleaseRef = useRef<number | null>(null);
+  const dashboardReady = Boolean(snapshot && application);
 
   useEffect(() => {
     applicationRef.current = application;
   }, [application]);
+
+  useEffect(() => {
+    if (!dashboardReady) return;
+
+    let frameId = 0;
+    let hashFrameId = 0;
+    const sectionIds = dashboardSections.map(({ id }) => id);
+    const isDashboardSection = (value: string): value is DashboardSection =>
+      sectionIds.includes(value as DashboardSection);
+
+    const syncActiveSection = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        if (navigationIntentRef.current) {
+          setActiveSection(navigationIntentRef.current);
+          return;
+        }
+
+        const activationLine = window.scrollY + 97;
+        const sections = sectionIds
+          .map((id) => document.getElementById(id))
+          .filter((element): element is HTMLElement => element !== null)
+          .sort(
+            (left, right) =>
+              left.getBoundingClientRect().top - right.getBoundingClientRect().top,
+          );
+
+        const current = sections.reduce<DashboardSection>((selected, element) => {
+          const elementTop = element.getBoundingClientRect().top + window.scrollY;
+          return elementTop <= activationLine ? (element.id as DashboardSection) : selected;
+        }, 'application');
+        setActiveSection(current);
+      });
+    };
+
+    const hashSection = window.location.hash.slice(1);
+    if (isDashboardSection(hashSection)) {
+      navigationIntentRef.current = hashSection;
+      hashFrameId = window.requestAnimationFrame(() => {
+        document.getElementById(hashSection)?.scrollIntoView();
+        setActiveSection(hashSection);
+      });
+      navigationReleaseRef.current = window.setTimeout(() => {
+        navigationIntentRef.current = null;
+      }, 800);
+    }
+
+    window.addEventListener('scroll', syncActiveSection, { passive: true });
+    window.addEventListener('resize', syncActiveSection);
+    window.addEventListener('hashchange', syncActiveSection);
+    syncActiveSection();
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.cancelAnimationFrame(hashFrameId);
+      if (navigationReleaseRef.current !== null) {
+        window.clearTimeout(navigationReleaseRef.current);
+      }
+      window.removeEventListener('scroll', syncActiveSection);
+      window.removeEventListener('resize', syncActiveSection);
+      window.removeEventListener('hashchange', syncActiveSection);
+    };
+  }, [dashboardReady]);
+
+  const selectSection = useCallback((section: DashboardSection) => {
+    navigationIntentRef.current = section;
+    if (navigationReleaseRef.current !== null) {
+      window.clearTimeout(navigationReleaseRef.current);
+    }
+    setActiveSection(section);
+    navigationReleaseRef.current = window.setTimeout(() => {
+      navigationIntentRef.current = null;
+    }, 800);
+  }, []);
 
   const applySnapshot = useCallback((next: DemoSnapshot) => {
     setSnapshot(next);
@@ -469,10 +555,18 @@ export function CampusDashboard() {
             </div>
             <div><p className="text-[15px] font-semibold tracking-tight">CampusOne</p><p className="text-xs text-muted-foreground">可信校园事务智能体</p></div>
           </div>
-          <nav className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
-            <a className="font-medium text-foreground" href="#application">场地申请</a>
-            <a className="transition-colors hover:text-foreground" href="#timeline">事务时间轴</a>
-            <a className="transition-colors hover:text-foreground" href="#evidence">AI 运行证据</a>
+          <nav aria-label="页面板块" className="hidden items-center gap-2 text-sm text-muted-foreground md:flex">
+            {dashboardSections.map(({ id, label }) => (
+              <a
+                key={id}
+                aria-current={activeSection === id ? 'location' : undefined}
+                className={`rounded-full px-3 py-1.5 transition-colors ${activeSection === id ? 'bg-teal-50 font-semibold text-teal-800 ring-1 ring-teal-200' : 'hover:bg-slate-100 hover:text-foreground'}`}
+                href={`#${id}`}
+                onClick={() => selectSection(id)}
+              >
+                {label}
+              </a>
+            ))}
           </nav>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="hidden border-emerald-200 bg-emerald-50 text-emerald-700 sm:inline-flex"><span className="size-1.5 rounded-full bg-emerald-500" />模拟数据</Badge>
@@ -521,9 +615,9 @@ export function CampusDashboard() {
           </Alert>
         )}
 
-        <section id="application" className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_410px]">
+        <section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_410px]">
           <div className="space-y-5">
-            <Card className="shadow-[0_12px_45px_rgba(23,42,58,0.06)]">
+            <Card id="application" className="scroll-mt-24 shadow-[0_12px_45px_rgba(23,42,58,0.06)]">
               <CardHeader className="border-b border-border/70 pb-5"><CardTitle className="text-lg">场地使用申请</CardTitle><CardDescription>{editable ? '请填写可核验的事实。AI 建议必须经你确认后才会写入。' : '当前版本已锁定；正式状态只由角色权限和后端状态机改变。'}</CardDescription><CardAction><Badge variant="secondary">{statusMeta[status].label} V{snapshot.case.currentVersion}</Badge></CardAction></CardHeader>
               <CardContent className="space-y-6 pt-2">
                 <div className="grid gap-5 md:grid-cols-2">
@@ -572,10 +666,10 @@ export function CampusDashboard() {
               <Card><CardHeader><CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="size-4 text-teal-700" />确定性规则预检</CardTitle><CardDescription>模型不参与通过/不通过判定；以下结果可独立复算。</CardDescription><CardAction><Badge variant={validation.passed ? 'default' : 'destructive'}>{validation.passed ? '全部通过' : '存在异常'}</Badge></CardAction></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">{validation.results.map((item) => <div key={item.ruleId} className={`rounded-xl border p-4 ${item.passed ? 'border-emerald-200 bg-emerald-50/60' : 'border-rose-200 bg-rose-50/60'}`}><div className="flex items-start gap-3">{item.passed ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <XCircle className="mt-0.5 size-4 shrink-0 text-rose-600" />}<div><p className="text-sm font-medium">{item.label}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{item.message}</p><p className="mt-2 font-mono text-[10px] text-slate-500">{item.ruleId}</p></div></div></div>)}</CardContent></Card>
             )}
 
-            <Card id="timeline"><CardHeader><CardTitle className="text-base">不可变事务时间轴</CardTitle><CardDescription>每次状态变化带角色、前后状态和幂等键写入后端。</CardDescription></CardHeader><CardContent className="space-y-1">{snapshot.events.map((event, index) => <div key={event.id} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-3 py-3"><div className="relative grid size-7 place-items-center rounded-full bg-teal-50 text-teal-700 ring-1 ring-teal-200"><CircleDashed className="size-3.5" />{index < snapshot.events.length - 1 && <span className="absolute top-7 h-7 w-px bg-border" />}</div><div><p className="text-sm font-medium">{event.beforeState ? `${statusMeta[event.beforeState as CaseStatus]?.label ?? event.beforeState} → ${statusMeta[event.afterState as CaseStatus]?.label ?? event.afterState}` : '创建申请'}</p><p className="mt-1 text-xs text-muted-foreground">{event.actorRole === 'student' ? '申请人操作' : event.actorRole === 'admin' ? '管理员操作' : '系统操作'} · {event.eventType}</p></div><time className="text-[11px] text-muted-foreground">{formatDate(event.createdAt)}</time></div>)}</CardContent></Card>
+            <Card id="timeline" className="scroll-mt-24"><CardHeader><CardTitle className="text-base">不可变事务时间轴</CardTitle><CardDescription>每次状态变化带角色、前后状态和幂等键写入后端。</CardDescription></CardHeader><CardContent className="space-y-1">{snapshot.events.map((event, index) => <div key={event.id} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-3 py-3"><div className="relative grid size-7 place-items-center rounded-full bg-teal-50 text-teal-700 ring-1 ring-teal-200"><CircleDashed className="size-3.5" />{index < snapshot.events.length - 1 && <span className="absolute top-7 h-7 w-px bg-border" />}</div><div><p className="text-sm font-medium">{event.beforeState ? `${statusMeta[event.beforeState as CaseStatus]?.label ?? event.beforeState} → ${statusMeta[event.afterState as CaseStatus]?.label ?? event.afterState}` : '创建申请'}</p><p className="mt-1 text-xs text-muted-foreground">{event.actorRole === 'student' ? '申请人操作' : event.actorRole === 'admin' ? '管理员操作' : '系统操作'} · {event.eventType}</p></div><time className="text-[11px] text-muted-foreground">{formatDate(event.createdAt)}</time></div>)}</CardContent></Card>
           </div>
 
-          <aside className="space-y-5" id="evidence">
+          <aside className="space-y-5">
             <Card className="border-0 bg-slate-950 text-slate-50 shadow-[0_14px_48px_rgba(15,23,42,0.18)] ring-0">
               <CardHeader className="border-b border-white/10 pb-4"><CardTitle className="flex items-center gap-2"><Sparkles className="size-4 text-teal-300" />AI 辅助台</CardTitle><CardDescription className="text-slate-400">输出必须通过 Schema、规则 ID 与证据引用校验</CardDescription></CardHeader>
               <CardContent className="space-y-5 pt-1">
@@ -605,7 +699,7 @@ export function CampusDashboard() {
               </CardContent>
             </Card>
 
-            <Card><CardHeader><CardTitle className="text-sm">最近 AI 运行证据</CardTitle><CardDescription>保存摘要、模型、耗时、验证状态与错误码；不保存 API Key。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.aiRuns.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">尚无 AI 运行记录</p> : snapshot.aiRuns.slice(0, 5).map((run) => <div key={run.id} className="rounded-lg border bg-white p-3"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{run.taskType}</span><Badge variant={run.validationStatus === 'passed' ? 'secondary' : 'destructive'}>{run.validationStatus === 'passed' ? '已通过' : '已拒绝'}</Badge></div><div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>{run.model} · {run.latencyMs}ms</span><span>{run.errorCode ?? formatDate(run.createdAt)}</span></div></div>)}</CardContent></Card>
+            <Card id="evidence" className="scroll-mt-24"><CardHeader><CardTitle className="text-sm">最近 AI 运行证据</CardTitle><CardDescription>保存摘要、模型、耗时、验证状态与错误码；不保存 API Key。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.aiRuns.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">尚无 AI 运行记录</p> : snapshot.aiRuns.slice(0, 5).map((run) => <div key={run.id} className="rounded-lg border bg-white p-3"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{run.taskType}</span><Badge variant={run.validationStatus === 'passed' ? 'secondary' : 'destructive'}>{run.validationStatus === 'passed' ? '已通过' : '已拒绝'}</Badge></div><div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>{run.model} · {run.latencyMs}ms</span><span>{run.errorCode ?? formatDate(run.createdAt)}</span></div></div>)}</CardContent></Card>
 
             <Card className="bg-[#f8f9f7]"><CardHeader><CardTitle className="text-sm">可信控制状态</CardTitle><CardDescription>正式状态只由后端规则与人工操作改变</CardDescription></CardHeader><CardContent className="space-y-3">{[['表单 Schema', 'V1.2', true], ['场地规则集', snapshot.rules[0]?.version ?? '—', snapshot.rules.length === 5], ['模型输出验证', snapshot.aiRuns[0]?.validationStatus ?? '等待运行', snapshot.aiRuns[0]?.validationStatus === 'passed']].map(([label, value, ready]) => <div key={String(label)} className="flex items-center justify-between rounded-lg border bg-white px-3 py-2.5"><div className="flex items-center gap-2 text-xs font-medium"><CheckCircle2 className={`size-4 ${ready ? 'text-emerald-600' : 'text-slate-300'}`} />{label}</div><span className="text-[11px] text-muted-foreground">{String(value)}</span></div>)}</CardContent></Card>
           </aside>
