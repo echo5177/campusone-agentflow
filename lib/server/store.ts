@@ -11,7 +11,7 @@ import {
   venues,
 } from '@/db/schema';
 import type { KnowledgeSnippet } from '@/lib/agent/knowledge';
-import { demoKnowledge, demoVenues } from '@/lib/demo/data';
+import { demoBookings, demoKnowledge, demoVenues } from '@/lib/demo/data';
 import { ruleCatalog } from '@/lib/domain/rules';
 import { assertTransition, nextVersionFor } from '@/lib/domain/state-machine';
 import type {
@@ -168,6 +168,9 @@ export async function getDemoSnapshot(caseId: string) {
     events: eventRows,
     aiRuns: runRows,
     venues: await db.select().from(venues),
+    // Static demo reference data rather than a table: the conflict rule cites it,
+    // so the UI needs it to explain why a slot was refused.
+    bookings: demoBookings,
     rules: await db.select().from(rules),
     knowledge: await db.select().from(knowledgeDocuments),
   };

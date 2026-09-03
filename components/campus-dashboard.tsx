@@ -75,6 +75,7 @@ type DemoSnapshot = {
     createdAt: string;
   }>;
   venues: Venue[];
+  bookings: Array<{ venueId: string; startTime: string; endTime: string; title: string }>;
   rules: Array<{ id: string; label: string; version: string }>;
   knowledge: Array<{ id: string; title: string; source: string; content: string }>;
 };
@@ -189,9 +190,26 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function formatSlot(startTime: string, endTime: string) {
+  const day = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: CAMPUS_TIME_ZONE,
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(startTime));
+  const clock = (value: string) =>
+    new Intl.DateTimeFormat('zh-CN', {
+      timeZone: CAMPUS_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(value));
+  return `${day} ${clock(startTime)}–${clock(endTime)}`;
+}
+
 const dashboardSections = [
   { id: 'application', label: '场地申请' },
   { id: 'timeline', label: '事务时间轴' },
+  { id: 'availability', label: '场地时段' },
   { id: 'knowledge', label: '知识库' },
   { id: 'evidence', label: 'AI 运行证据' },
 ] as const;
@@ -767,6 +785,31 @@ export function CampusDashboard() {
                 <div className="flex flex-wrap gap-2">{status === 'draft' && <Button variant="outline" className="flex-1 border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => runAgent('form')} disabled={busy !== null}>表单辅助</Button>}{(status === 'submitted' || status === 'under_review') && <Button variant="outline" className="flex-1 border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => runAgent('review')} disabled={busy !== null}>审核摘要</Button>}{status === 'returned' && <Button variant="outline" className="flex-1 border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => runAgent('return')} disabled={busy !== null}>退回通知</Button>}</div>
               </CardContent>
             </Card>
+
+            <Card id="availability" className="scroll-mt-24"><CardHeader><CardTitle className="text-sm">开放时间与已占用时段</CardTitle><CardDescription>VENUE-HOUR-001 与 VENUE-SLOT-001 判定所依据的事实，全部为模拟数据。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.venues.map((item) => {
+              const taken = snapshot.bookings.filter((booking) => booking.venueId === item.id);
+              const selected = item.id === application.venueId;
+              return (
+                <div key={item.id} className={`rounded-lg border p-3 ${selected ? 'border-teal-300 bg-teal-50/70' : 'bg-white'}`}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-xs font-medium">{item.name}</p>
+                    <span className="font-mono text-[10px] text-slate-500">{item.availableFrom}–{item.availableTo}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">容量 {item.capacity} 人 · {item.equipment.join('、')}</p>
+                  {taken.length === 0 ? (
+                    <p className="mt-2 text-[11px] text-muted-foreground">暂无已占用时段</p>
+                  ) : (
+                    <ul className="mt-2 space-y-1">
+                      {taken.map((booking) => (
+                        <li key={booking.title} className="text-[11px] leading-5 text-rose-700">
+                          已占用 {formatSlot(booking.startTime, booking.endTime)} · {booking.title}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}</CardContent></Card>
 
             <Card id="knowledge" className="scroll-mt-24"><CardHeader><CardTitle className="text-sm">场地事务知识库</CardTitle><CardDescription>每条规则都绑定制度依据；AI 只能读取当前任务命中的条目。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.knowledge.map((document) => {
               const cited = aiPresentation?.result.knowledge.some((item) => item.id === document.id) ?? false;
