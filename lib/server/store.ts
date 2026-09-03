@@ -263,22 +263,35 @@ export async function transitionCase({
     idempotencyKey,
     createdAt: timestamp,
   });
-  if (nextVersion !== caseRow.currentVersion) {
-    if (!revisedApplication) throw new Error('REVISION_REQUIRED');
-    await db.batch([
-      updateCase,
-      insertEvent,
+  const opensNewVersion = nextVersion !== caseRow.currentVersion;
+  if (opensNewVersion && !revisedApplication) throw new Error('REVISION_REQUIRED');
+
+  const statements: [typeof updateCase, ...unknown[]] = [updateCase, insertEvent];
+  if (opensNewVersion) {
+    statements.push(
       db.insert(caseVersions).values({
         id: `${caseId}-V${nextVersion}`,
         caseId: caseId,
         version: nextVersion,
-        formData: revisedApplication,
+        formData: revisedApplication as VenueApplication,
         createdBy: actorId,
         createdAt: timestamp,
       }),
-    ]);
-  } else {
-    await db.batch([updateCase, insertEvent]);
+    );
+  }
+
+  try {
+    await db.batch(statements as Parameters<typeof db.batch>[0]);
+  } catch (error) {
+    // Two requests can pass the duplicate check before either writes. The unique
+    // index on idempotency_key is what actually decides; the loser reports the
+    // winner's result rather than a conflict the user never caused.
+    const [written] = await db
+      .select({ id: caseEvents.id })
+      .from(caseEvents)
+      .where(eq(caseEvents.idempotencyKey, idempotencyKey))
+      .limit(1);
+    if (!written) throw error;
   }
   return getDemoSnapshot(caseId);
 }
