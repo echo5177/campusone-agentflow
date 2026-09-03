@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { runFormAssist } from '@/lib/agent/provider';
+import { faultModes } from '@/lib/agent/types';
 
 const requestSchema = z.object({
   application: z.object({
@@ -15,10 +16,7 @@ const requestSchema = z.object({
     contactPhone: z.string(),
     equipment: z.array(z.string()),
   }),
-  faultMode: z
-    .enum(['none', 'invalid_json', 'rule_999', 'timeout'])
-    .optional()
-    .default('none'),
+  faultMode: z.enum(faultModes).optional().default('none'),
 });
 
 export async function POST(request: Request) {

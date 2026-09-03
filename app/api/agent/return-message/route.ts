@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
 import { runReturnMessageDraft } from '@/lib/agent/provider';
-import { validateVenueApplication } from '@/lib/domain/rules';
+import { faultModes } from '@/lib/agent/types';
 import { demoBookings, demoVenues } from '@/lib/demo/data';
+import { validateVenueApplication } from '@/lib/domain/rules';
 
 const applicationSchema = z.object({
   activityName: z.string(),
@@ -19,7 +20,7 @@ const applicationSchema = z.object({
 
 const requestSchema = z.object({
   application: applicationSchema,
-  faultMode: z.enum(['none', 'invalid_json', 'rule_999', 'timeout']).default('none'),
+  faultMode: z.enum(faultModes).optional().default('none'),
 });
 
 export async function POST(request: Request) {

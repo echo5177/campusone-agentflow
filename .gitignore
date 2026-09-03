@@ -45,3 +45,6 @@ next-env.d.ts
 !/work/slides/build_deck.mjs
 !/work/slides/campusone-dashboard-viewport.png
 *.inspect.ndjson
+
+# typescript incremental build cache
+tsconfig.tsbuildinfo

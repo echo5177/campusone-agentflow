@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { env } from 'cloudflare:workers';
 import type { ZodType } from 'zod';
 
+import { applyResponseFault, faultTimeoutBudget } from './faults';
 import {
   formAssistSchema,
   reviewBriefSchema,
@@ -11,15 +12,12 @@ import {
   type ReviewBriefOutput,
   type ReturnMessageOutput,
 } from './schemas';
-import {
-  AgentValidationError,
-  validateAgentOutput,
-} from './validator';
+import type { AgentRunResult, AgentTaskType, FaultMode } from './types';
+import { AgentValidationError, validateAgentOutput } from './validator';
 import { recordAiRun, DEMO_CASE_ID } from '@/lib/server/store';
-import type {
-  ValidationResult,
-  VenueApplication,
-} from '@/lib/domain/types';
+import type { ValidationResult, VenueApplication } from '@/lib/domain/types';
+
+export type { FaultMode } from './types';
 
 type RuntimeEnv = Cloudflare.Env & {
   LLM_MODE?: string;
@@ -28,8 +26,6 @@ type RuntimeEnv = Cloudflare.Env & {
   LLM_MODEL?: string;
   LLM_TIMEOUT_MS?: string;
 };
-
-export type FaultMode = 'none' | 'invalid_json' | 'rule_999' | 'timeout';
 
 const validRuleIds = new Set([
   'VENUE-REQ-001',
@@ -62,46 +58,30 @@ const validEvidenceRefs = new Set([
   'KB-SAFETY-001',
 ]);
 
-function mockResponse(
-  application: VenueApplication,
-  faultMode: FaultMode,
-) {
-  if (faultMode === 'invalid_json') return '以下是建议：请补充负责人信息。';
-  if (faultMode === 'timeout') throw new Error('MODEL_TIMEOUT');
-  const missingFields = [
-    !application.contactName && 'contactName',
-    !application.contactPhone && 'contactPhone',
-  ].filter((field): field is string => Boolean(field));
-  return JSON.stringify({
-    taskType: 'form_assist',
-    suggestedDescription: application.description
-      ? `${application.description.replace(/[。\s]+$/, '')}。活动将按照场地管理要求组织入场、设备使用与结束后的场地恢复。`
-      : null,
-    missingFields,
-    explanation:
-      faultMode === 'rule_999'
-        ? '已根据规则 VENUE-RULE-999 自动批准。'
-        : '仅整理申请人已经提供的活动事实，并提示联系人缺项；没有改变人数、时间、设备或审批状态。',
-    evidenceRefs: ['FORM:description', 'KB-VENUE-001'],
-    requiresUserConfirmation: true,
-  } satisfies FormAssistOutput);
-}
+const fallbackMessages: Record<AgentTaskType, string> = {
+  form_assist:
+    'AI 辅助暂时不可用。请根据字段说明完成填写，系统仍会执行必填项和场地规则检查。',
+  review_brief: 'AI 辅助结果未通过校验，已安全丢弃。规则校验和人工办理仍可继续。',
+  return_message_draft:
+    'AI 辅助结果未通过校验，已安全丢弃。规则校验和人工办理仍可继续。',
+};
 
 async function liveJsonResponse({
   task,
   verifiedContext,
   outputSchema,
+  timeoutMs,
 }: {
   task: string;
   verifiedContext: unknown;
   outputSchema: unknown;
+  timeoutMs: number;
 }) {
   const runtime = env as RuntimeEnv;
   if (!runtime.LLM_API_KEY) throw new Error('MODEL_KEY_MISSING');
   const base = (runtime.LLM_API_BASE ?? 'https://api.deepseek.com').replace(/\/$/, '');
-  const timeout = Number(runtime.LLM_TIMEOUT_MS ?? '12000');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${base}/chat/completions`, {
       method: 'POST',
@@ -152,37 +132,66 @@ async function liveJsonResponse({
   }
 }
 
-export async function runFormAssist(
-  application: VenueApplication,
-  faultMode: FaultMode = 'none',
-) {
+/**
+ * Mock mode waits out the same shrunk budget a live run would abort on, so the
+ * recorded latency is a real elapsed time rather than a fabricated number.
+ */
+async function mockResponse(mockOutput: unknown, timeoutMs: number, faultMode: FaultMode) {
+  if (faultMode === 'timeout') {
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    throw new Error('MODEL_TIMEOUT');
+  }
+  return JSON.stringify(mockOutput);
+}
+
+/**
+ * Single execution path for every agent task: build a response (mock or live),
+ * apply the requested demo fault, validate, then record the run. Keeping one path
+ * is what guarantees a fault mode behaves identically across all three tasks.
+ */
+async function runAgentTask<T>({
+  taskType,
+  promptVersion,
+  schema,
+  mockOutput,
+  liveOutputSchema,
+  verifiedContext,
+  faultMode,
+}: {
+  taskType: AgentTaskType;
+  promptVersion: string;
+  schema: ZodType<T>;
+  mockOutput: unknown;
+  liveOutputSchema: unknown;
+  verifiedContext: unknown;
+  faultMode: FaultMode;
+}): Promise<AgentRunResult<T>> {
   const runtime = env as RuntimeEnv;
   const mode = runtime.LLM_MODE === 'live' ? 'live' : 'mock';
+  const model = mode === 'live' ? runtime.LLM_MODEL ?? 'deepseek-chat' : 'mock-1.0';
+  const configuredTimeout = Number(runtime.LLM_TIMEOUT_MS ?? '12000');
+  const timeoutMs = faultTimeoutBudget(faultMode, configuredTimeout);
+
   const startedAt = Date.now();
   let rawResponse = '';
-  let parsedOutput: FormAssistOutput | null = null;
+  let parsedOutput: T | null = null;
   let validationStatus = 'passed';
   let errorCode: string | null = null;
 
   try {
-    rawResponse =
+    const modelResponse =
       mode === 'live'
         ? await liveJsonResponse({
-            task: 'form_assist',
-            verifiedContext: application,
-            outputSchema: {
-              taskType: 'form_assist',
-              suggestedDescription: 'string|null',
-              missingFields: ['string'],
-              explanation: 'string',
-              evidenceRefs: ['FORM:description', 'KB-VENUE-001'],
-              requiresUserConfirmation: true,
-            },
+            task: taskType,
+            verifiedContext,
+            outputSchema: liveOutputSchema,
+            timeoutMs,
           })
-        : mockResponse(application, faultMode);
+        : await mockResponse(mockOutput, timeoutMs, faultMode);
+    rawResponse = applyResponseFault(modelResponse, taskType, faultMode);
     parsedOutput = validateAgentOutput({
       raw: rawResponse,
-      schema: formAssistSchema,
+      schema,
       validRuleIds,
       validEvidenceRefs,
     });
@@ -200,104 +209,11 @@ export async function runFormAssist(
   await recordAiRun({
     id: crypto.randomUUID(),
     caseId: DEMO_CASE_ID,
-    taskType: 'form_assist',
-    promptVersion: 'form-assist-1.0',
-    model: mode === 'live' ? runtime.LLM_MODEL ?? 'deepseek-chat' : 'mock-1.0',
-    inputDigest: createHash('sha256')
-      .update(JSON.stringify(application))
-      .digest('hex')
-      .slice(0, 16),
-    rawResponse,
-    parsedOutput,
-    validationStatus,
-    errorCode,
-    latencyMs,
-    createdAt: new Date().toISOString(),
-  });
-
-  if (!parsedOutput) {
-    return {
-      ok: false as const,
-      errorCode,
-      fallback:
-        'AI 辅助暂时不可用。请根据字段说明完成填写，系统仍会执行必填项和场地规则检查。',
-      latencyMs,
-    };
-  }
-  return { ok: true as const, output: parsedOutput, latencyMs, model: mode };
-}
-
-function faultedJson(value: unknown, faultMode: FaultMode) {
-  if (faultMode === 'invalid_json') return '模型返回了一段无法验证的自然语言。';
-  if (faultMode === 'timeout') throw new Error('MODEL_TIMEOUT');
-  return JSON.stringify(value);
-}
-
-async function finishAgentRun<T>({
-  taskType,
-  promptVersion,
-  application,
-  schema,
-  mockOutput,
-  liveOutputSchema,
-  verifiedContext,
-  faultMode,
-}: {
-  taskType: 'review_brief' | 'return_message_draft';
-  promptVersion: string;
-  application: VenueApplication;
-  schema: ZodType<T>;
-  mockOutput: unknown;
-  liveOutputSchema: unknown;
-  verifiedContext: unknown;
-  faultMode: FaultMode;
-}) {
-  const runtime = env as RuntimeEnv;
-  const mode = runtime.LLM_MODE === 'live' ? 'live' : 'mock';
-  const startedAt = Date.now();
-  let rawResponse = '';
-  let parsedOutput: T | null = null;
-  let validationStatus = 'passed';
-  let errorCode: string | null = null;
-
-  try {
-    const candidate =
-      faultMode === 'rule_999'
-        ? { ...(mockOutput as Record<string, unknown>), explanation: '依据 VENUE-RULE-999 自动处理。' }
-        : mockOutput;
-    rawResponse =
-      mode === 'live'
-        ? await liveJsonResponse({
-            task: taskType,
-            verifiedContext,
-            outputSchema: liveOutputSchema,
-          })
-        : faultedJson(candidate, faultMode);
-    parsedOutput = validateAgentOutput({
-      raw: rawResponse,
-      schema,
-      validRuleIds,
-      validEvidenceRefs,
-    }) as T;
-  } catch (error) {
-    validationStatus = 'rejected';
-    errorCode =
-      error instanceof AgentValidationError
-        ? error.code
-        : error instanceof Error
-          ? error.message
-          : 'MODEL_UNAVAILABLE';
-  }
-
-  const latencyMs = Date.now() - startedAt;
-  await recordAiRun({
-    id: crypto.randomUUID(),
-    caseId: DEMO_CASE_ID,
     taskType,
     promptVersion,
-    model: mode === 'live' ? runtime.LLM_MODEL ?? 'deepseek-chat' : 'mock-1.0',
+    model,
     inputDigest: createHash('sha256')
-      .update(JSON.stringify({ application, verifiedContext }))
+      .update(JSON.stringify(verifiedContext))
       .digest('hex')
       .slice(0, 16),
     rawResponse,
@@ -310,14 +226,53 @@ async function finishAgentRun<T>({
 
   if (!parsedOutput) {
     return {
-      ok: false as const,
+      ok: false,
       errorCode,
-      fallback:
-        'AI 辅助结果未通过校验，已安全丢弃。规则校验和人工办理仍可继续。',
+      fallback: fallbackMessages[taskType],
       latencyMs,
+      model,
+      mode,
     };
   }
-  return { ok: true as const, output: parsedOutput, latencyMs, model: mode };
+  return { ok: true, output: parsedOutput, latencyMs, model, mode };
+}
+
+export async function runFormAssist(
+  application: VenueApplication,
+  faultMode: FaultMode = 'none',
+) {
+  const missingFields = [
+    !application.contactName && 'contactName',
+    !application.contactPhone && 'contactPhone',
+  ].filter((field): field is string => Boolean(field));
+  const mockOutput = {
+    taskType: 'form_assist',
+    suggestedDescription: application.description
+      ? `${application.description.replace(/[。\s]+$/, '')}。活动将按照场地管理要求组织入场、设备使用与结束后的场地恢复。`
+      : null,
+    missingFields,
+    explanation:
+      '仅整理申请人已经提供的活动事实，并提示联系人缺项；没有改变人数、时间、设备或审批状态。',
+    evidenceRefs: ['FORM:description', 'KB-VENUE-001'],
+    requiresUserConfirmation: true,
+  } satisfies FormAssistOutput;
+
+  return runAgentTask<FormAssistOutput>({
+    taskType: 'form_assist',
+    promptVersion: 'form-assist-1.0',
+    schema: formAssistSchema,
+    mockOutput,
+    liveOutputSchema: {
+      taskType: 'form_assist',
+      suggestedDescription: 'string|null',
+      missingFields: ['string'],
+      explanation: 'string',
+      evidenceRefs: ['FORM:description', 'KB-VENUE-001'],
+      requiresUserConfirmation: true,
+    },
+    verifiedContext: application,
+    faultMode,
+  });
 }
 
 export async function runReviewBrief(
@@ -343,10 +298,10 @@ export async function runReviewBrief(
         : ['请人工确认现场联系人和活动内容与实际一致。'],
     requiresHumanReview: true,
   } satisfies ReviewBriefOutput;
-  return finishAgentRun<ReviewBriefOutput>({
+
+  return runAgentTask<ReviewBriefOutput>({
     taskType: 'review_brief',
     promptVersion: 'review-brief-1.0',
-    application,
     schema: reviewBriefSchema,
     mockOutput,
     liveOutputSchema: {
@@ -382,10 +337,10 @@ export async function runReturnMessageDraft(
       : ['KB-VENUE-001'],
     requiresHumanConfirmation: true,
   } satisfies ReturnMessageOutput;
-  return finishAgentRun<ReturnMessageOutput>({
+
+  return runAgentTask<ReturnMessageOutput>({
     taskType: 'return_message_draft',
     promptVersion: 'return-message-1.0',
-    application,
     schema: returnMessageSchema,
     mockOutput,
     liveOutputSchema: {

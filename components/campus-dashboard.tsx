@@ -78,8 +78,15 @@ type DemoSnapshot = {
 };
 
 type AgentResult<T> =
-  | { ok: true; output: T; latencyMs: number; model: string }
-  | { ok: false; errorCode: string | null; fallback: string; latencyMs: number };
+  | { ok: true; output: T; latencyMs: number; model: string; mode: 'mock' | 'live' }
+  | {
+      ok: false;
+      errorCode: string | null;
+      fallback: string;
+      latencyMs: number;
+      model: string;
+      mode: 'mock' | 'live';
+    };
 
 type AiPresentation =
   | { kind: 'form'; result: AgentResult<FormAssistOutput> }
@@ -666,7 +673,7 @@ export function CampusDashboard() {
                   <NativeSelect id="fault-mode" className="mt-2 w-full border-white/15 bg-slate-900 text-white" value={faultMode} onChange={(event) => setFaultMode(event.target.value as FaultMode)}>
                     <NativeSelectOption value="none">正常输出</NativeSelectOption><NativeSelectOption value="invalid_json">非法 JSON</NativeSelectOption><NativeSelectOption value="rule_999">虚构规则</NativeSelectOption><NativeSelectOption value="timeout">模型超时</NativeSelectOption>
                   </NativeSelect>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-400">用于现场证明：模型失控时，系统会拒收输出并安全降级。</p>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-400">用于现场证明：模型失控时，系统会拒收输出并安全降级。真实模型模式下同样生效——先真实调用，再注入故障，拒绝理由和耗时都是真的。</p>
                 </div>
 
                 {busy?.startsWith('ai-') && <div className="flex items-center gap-2 rounded-xl border border-teal-300/20 bg-teal-300/8 p-4 text-xs text-teal-100"><LoaderCircle className="size-4 animate-spin" />正在生成并验证 AI 输出…</div>}
