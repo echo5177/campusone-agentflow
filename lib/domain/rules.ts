@@ -29,6 +29,23 @@ export type RuleId = (typeof ruleCatalog)[number]['id'];
 const labelOf = (ruleId: RuleId) =>
   ruleCatalog.find((rule) => rule.id === ruleId)!.label;
 
+/** Required text fields, in the order the form presents them. */
+const requiredTextFields = [
+  ['activityName', '活动名称'],
+  ['organization', '申请组织'],
+  ['venueId', '候选场地'],
+  ['description', '活动说明'],
+  ['contactName', '现场负责人'],
+  ['contactPhone', '联系电话'],
+] as const satisfies readonly (readonly [keyof VenueApplication, string])[];
+
+/** Names the fields VENUE-REQ-001 is unhappy about, so the agent can list them. */
+export function missingRequiredFields(application: VenueApplication) {
+  return requiredTextFields
+    .filter(([field]) => String(application[field] ?? '').trim().length === 0)
+    .map(([field, label]) => ({ field, label }));
+}
+
 function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
   return startA < endB && endA > startB;
 }
@@ -40,15 +57,8 @@ export function validateVenueApplication(
 ): ValidationResult {
   const start = new Date(application.startTime);
   const end = new Date(application.endTime);
-  const requiredFields = [
-    application.activityName,
-    application.organization,
-    application.venueId,
-    application.description,
-    application.contactName,
-    application.contactPhone,
-  ];
-  const complete = requiredFields.every((value) => value.trim().length > 0);
+  const missingFields = missingRequiredFields(application);
+  const complete = missingFields.length === 0;
   const validDates =
     !Number.isNaN(start.getTime()) &&
     !Number.isNaN(end.getTime()) &&
@@ -107,7 +117,9 @@ export function validateVenueApplication(
       ruleId: 'VENUE-REQ-001',
       label: labelOf('VENUE-REQ-001'),
       passed: complete,
-      message: complete ? '必填字段齐全。' : '请补充活动、组织、场地、说明和联系人信息。',
+      message: complete
+        ? '必填字段齐全。'
+        : `请补充：${missingFields.map(({ label }) => label).join('、')}。`,
       evidenceRefs: ['FORM-SCHEMA-1.2'],
     },
     {

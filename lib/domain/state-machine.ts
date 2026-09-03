@@ -28,6 +28,19 @@ export function canTransition(
   );
 }
 
+/**
+ * A returned case is revised by creating a new version rather than editing the
+ * one the reviewer saw, so the returned draft and the reviewer's copy both stay
+ * on the record. Every other transition keeps the current version.
+ */
+export function nextVersionFor(
+  from: CaseStatus,
+  to: CaseStatus,
+  currentVersion: number,
+) {
+  return from === 'returned' && to === 'draft' ? currentVersion + 1 : currentVersion;
+}
+
 export function assertTransition(
   from: CaseStatus,
   to: CaseStatus,

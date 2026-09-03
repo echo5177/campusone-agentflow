@@ -18,6 +18,7 @@ import {
 import type { AgentRunResult, AgentTaskType, FaultMode } from './types';
 import { AgentValidationError, validateAgentOutput } from './validator';
 import { getKnowledgeByIds, recordAiRun } from '@/lib/server/store';
+import { missingRequiredFields } from '@/lib/domain/rules';
 import type { ValidationResult, VenueApplication } from '@/lib/domain/types';
 
 export type { FaultMode } from './types';
@@ -274,10 +275,9 @@ export async function runFormAssist(
   application: VenueApplication,
   faultMode: FaultMode = 'none',
 ) {
-  const missingFields = [
-    !application.contactName && 'contactName',
-    !application.contactPhone && 'contactPhone',
-  ].filter((field): field is string => Boolean(field));
+  // Same source as VENUE-REQ-001, so the assistant cannot report a different
+  // set of gaps than the rule that will block the submission.
+  const missingFields = missingRequiredFields(application).map(({ field }) => field);
   return runAgentTask<FormAssistOutput>({
     taskType: 'form_assist',
     promptVersion: 'form-assist-1.1',

@@ -13,7 +13,7 @@ import {
 import type { KnowledgeSnippet } from '@/lib/agent/knowledge';
 import { demoKnowledge, demoVenues } from '@/lib/demo/data';
 import { ruleCatalog } from '@/lib/domain/rules';
-import { assertTransition } from '@/lib/domain/state-machine';
+import { assertTransition, nextVersionFor } from '@/lib/domain/state-machine';
 import type {
   ActorRole,
   CaseStatus,
@@ -243,10 +243,7 @@ export async function transitionCase({
   assertTransition(caseRow.status, to, role);
 
   const timestamp = now();
-  const nextVersion =
-    caseRow.status === 'returned' && to === 'draft'
-      ? caseRow.currentVersion + 1
-      : caseRow.currentVersion;
+  const nextVersion = nextVersionFor(caseRow.status, to, caseRow.currentVersion);
   const updateCase = db
     .update(cases)
     .set({ status: to, currentVersion: nextVersion, updatedAt: timestamp })
