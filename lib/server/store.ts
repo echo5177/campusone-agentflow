@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 
 import { getDb } from '@/db';
 import {
@@ -39,6 +39,35 @@ const initialApplication: VenueApplication = {
 };
 
 
+/**
+ * Bump whenever venues, rules or knowledge documents change. A deployed D1 keeps
+ * its rows across releases, so without this the demo would keep serving the
+ * reference data from whenever it was first seeded.
+ */
+const REFERENCE_DATA_VERSION = '2026.09.2';
+
+const ruleRows = () =>
+  ruleCatalog.map((rule) => ({
+    id: rule.id,
+    label: rule.label,
+    version: REFERENCE_DATA_VERSION,
+    source: '模拟场地管理规则',
+    enabled: true,
+  }));
+
+/** Replaces venues, rules and knowledge. Nothing references them by foreign key. */
+async function reseedReferenceData() {
+  const db = getDb();
+  await db.batch([
+    db.delete(venues),
+    db.delete(rules),
+    db.delete(knowledgeDocuments),
+    db.insert(venues).values(demoVenues),
+    db.insert(rules).values(ruleRows()),
+    db.insert(knowledgeDocuments).values(demoKnowledge),
+  ]);
+}
+
 export async function ensureDemoSeeded() {
   const db = getDb();
   const [existing] = await db
@@ -46,20 +75,21 @@ export async function ensureDemoSeeded() {
     .from(cases)
     .where(eq(cases.id, DEMO_CASE_ID))
     .limit(1);
-  if (existing) return;
+  if (existing) {
+    const [staleRule] = await db
+      .select({ version: rules.version })
+      .from(rules)
+      .where(ne(rules.version, REFERENCE_DATA_VERSION))
+      .limit(1);
+    const [anyRule] = await db.select({ id: rules.id }).from(rules).limit(1);
+    if (staleRule || !anyRule) await reseedReferenceData();
+    return;
+  }
 
   const timestamp = now();
   await db.batch([
     db.insert(venues).values(demoVenues),
-    db.insert(rules).values(
-      ruleCatalog.map((rule) => ({
-        id: rule.id,
-        label: rule.label,
-        version: '2026.09',
-        source: '模拟场地管理规则',
-        enabled: true,
-      })),
-    ),
+    db.insert(rules).values(ruleRows()),
     db.insert(knowledgeDocuments).values(demoKnowledge),
     db.insert(cases).values({
       id: DEMO_CASE_ID,

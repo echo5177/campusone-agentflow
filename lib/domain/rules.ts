@@ -1,3 +1,4 @@
+import { campusWallClock, formatMinutes, openingMinutes } from './time';
 import type {
   ExistingBooking,
   ValidationResult,
@@ -20,6 +21,7 @@ export const ruleCatalog = [
   },
   { id: 'VENUE-SLOT-001', label: '申请时段无冲突', knowledgeRefs: ['KB-VENUE-001'] },
   { id: 'VENUE-EQP-001', label: '设备需求可满足', knowledgeRefs: ['KB-VENUE-002'] },
+  { id: 'VENUE-HOUR-001', label: '在场地开放时间内', knowledgeRefs: ['KB-VENUE-003'] },
 ] as const;
 
 export type RuleId = (typeof ruleCatalog)[number]['id'];
@@ -56,6 +58,34 @@ export function validateVenueApplication(
   const equipmentPassed = Boolean(
     venue && application.equipment.every((item) => venue.equipment.includes(item)),
   );
+  const openingHours = (():
+    | { passed: true; message: string }
+    | { passed: false; message: string } => {
+    if (!venue) return { passed: false, message: '未找到有效场地。' };
+    if (!validDates) return { passed: false, message: '时间格式无效，无法检查开放时间。' };
+    const opensAt = openingMinutes(venue.availableFrom);
+    const closesAt = openingMinutes(venue.availableTo);
+    if (opensAt === null || closesAt === null) {
+      return { passed: false, message: '场地开放时间配置无效。' };
+    }
+    const window = `${formatMinutes(opensAt)}–${formatMinutes(closesAt)}`;
+    const from = campusWallClock(start);
+    const to = campusWallClock(end);
+    if (from.day !== to.day) {
+      return { passed: false, message: `活动必须在同一天内结束，当前跨越 ${from.day} 与 ${to.day}。` };
+    }
+    if (from.minutes < opensAt || to.minutes > closesAt) {
+      return {
+        passed: false,
+        message: `申请时段 ${formatMinutes(from.minutes)}–${formatMinutes(to.minutes)} 超出开放时间 ${window}。`,
+      };
+    }
+    return {
+      passed: true,
+      message: `申请时段 ${formatMinutes(from.minutes)}–${formatMinutes(to.minutes)} 在开放时间 ${window} 内。`,
+    };
+  })();
+
   const conflictingBooking = validDates
     ? bookings.find(
         (booking) =>
@@ -119,6 +149,15 @@ export function validateVenueApplication(
           : '所选场地无法提供全部申请设备。'
         : '未找到有效场地。',
       evidenceRefs: venue ? [`VENUE:${venue.id}:equipment`] : ['FORM:venueId'],
+    },
+    {
+      ruleId: 'VENUE-HOUR-001',
+      label: labelOf('VENUE-HOUR-001'),
+      passed: openingHours.passed,
+      message: openingHours.message,
+      evidenceRefs: venue
+        ? ['FORM:startTime', 'FORM:endTime', `VENUE:${venue.id}:hours`]
+        : ['FORM:venueId'],
     },
   ];
 

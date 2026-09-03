@@ -43,6 +43,7 @@ import type {
   ReviewBriefOutput,
   ReturnMessageOutput,
 } from '@/lib/agent/schemas';
+import { CAMPUS_TIME_ZONE } from '@/lib/domain/time';
 import type {
   ActorRole,
   CaseStatus,
@@ -176,12 +177,15 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function formatDate(value: string) {
+  // Pinned to the campus clock so a reviewer's machine timezone cannot shift a
+  // displayed time away from the one the rules were evaluated against.
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: CAMPUS_TIME_ZONE,
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   }).format(new Date(value));
 }
 
@@ -493,7 +497,9 @@ export function CampusDashboard() {
       setValidation(result);
       setNotice({
         tone: result.passed ? 'success' : 'error',
-        text: result.passed ? '5 项确定性规则全部通过。' : '规则预检未通过，请按提示修正。',
+        text: result.passed
+          ? `${result.results.length} 项确定性规则全部通过。`
+          : '规则预检未通过，请按提示修正。',
       });
     });
     return result;
@@ -778,7 +784,7 @@ export function CampusDashboard() {
 
             <Card id="evidence" className="scroll-mt-24"><CardHeader><CardTitle className="text-sm">最近 AI 运行证据</CardTitle><CardDescription>保存摘要、模型、耗时、验证状态与错误码；不保存 API Key。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.aiRuns.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">尚无 AI 运行记录</p> : snapshot.aiRuns.slice(0, 5).map((run) => <div key={run.id} className="rounded-lg border bg-white p-3"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{run.taskType}</span><Badge variant={run.validationStatus === 'passed' ? 'secondary' : 'destructive'}>{run.validationStatus === 'passed' ? '已通过' : '已拒绝'}</Badge></div><div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>{run.model} · {run.latencyMs}ms</span><span>{run.errorCode ?? formatDate(run.createdAt)}</span></div></div>)}</CardContent></Card>
 
-            <Card className="bg-[#f8f9f7]"><CardHeader><CardTitle className="text-sm">可信控制状态</CardTitle><CardDescription>正式状态只由后端规则与人工操作改变</CardDescription></CardHeader><CardContent className="space-y-3">{[['表单 Schema', 'V1.2', true], ['场地规则集', snapshot.rules[0]?.version ?? '—', snapshot.rules.length === 5], ['模型输出验证', snapshot.aiRuns[0]?.validationStatus ?? '等待运行', snapshot.aiRuns[0]?.validationStatus === 'passed']].map(([label, value, ready]) => <div key={String(label)} className="flex items-center justify-between rounded-lg border bg-white px-3 py-2.5"><div className="flex items-center gap-2 text-xs font-medium"><CheckCircle2 className={`size-4 ${ready ? 'text-emerald-600' : 'text-slate-300'}`} />{label}</div><span className="text-[11px] text-muted-foreground">{String(value)}</span></div>)}</CardContent></Card>
+            <Card className="bg-[#f8f9f7]"><CardHeader><CardTitle className="text-sm">可信控制状态</CardTitle><CardDescription>正式状态只由后端规则与人工操作改变</CardDescription></CardHeader><CardContent className="space-y-3">{[['表单 Schema', 'V1.2', true], ['场地规则集', `${snapshot.rules.length} 条 · ${snapshot.rules[0]?.version ?? '—'}`, snapshot.rules.length > 0], ['模型输出验证', snapshot.aiRuns[0]?.validationStatus ?? '等待运行', snapshot.aiRuns[0]?.validationStatus === 'passed']].map(([label, value, ready]) => <div key={String(label)} className="flex items-center justify-between rounded-lg border bg-white px-3 py-2.5"><div className="flex items-center gap-2 text-xs font-medium"><CheckCircle2 className={`size-4 ${ready ? 'text-emerald-600' : 'text-slate-300'}`} />{label}</div><span className="text-[11px] text-muted-foreground">{String(value)}</span></div>)}</CardContent></Card>
           </aside>
         </section>
       </div>

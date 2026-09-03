@@ -16,6 +16,7 @@ export const validEvidenceRefs = new Set<string>([
   ...demoVenues.flatMap((venue) => [
     `VENUE:${venue.id}:capacity`,
     `VENUE:${venue.id}:equipment`,
+    `VENUE:${venue.id}:hours`,
   ]),
   ...demoBookings.map((booking) => `BOOKING:${booking.title}`),
   ...demoKnowledge.map((document) => document.id),
