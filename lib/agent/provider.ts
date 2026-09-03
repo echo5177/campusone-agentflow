@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 
 import { env } from 'cloudflare:workers';
-import type { ZodType } from 'zod';
+import { toJSONSchema, type ZodType } from 'zod';
 
 import { validEvidenceRefs, validRuleIds } from './evidence';
 import { applyResponseFault, faultTimeoutBudget } from './faults';
 import { selectKnowledgeIds, type KnowledgeSnippet } from './knowledge';
+import { MAX_ATTEMPTS, shouldRepair } from './retry';
 import {
   formAssistSchema,
   reviewBriefSchema,
@@ -44,12 +45,14 @@ async function liveJsonResponse({
   outputSchema,
   knowledge,
   timeoutMs,
+  repairHint,
 }: {
   task: string;
   verifiedContext: unknown;
   outputSchema: unknown;
   knowledge: KnowledgeSnippet[];
   timeoutMs: number;
+  repairHint?: string;
 }) {
   const runtime = env as RuntimeEnv;
   if (!runtime.LLM_API_KEY) throw new Error('MODEL_KEY_MISSING');
@@ -88,6 +91,9 @@ async function liveJsonResponse({
                 text: document.content,
               })),
               outputSchema,
+              // Only present on a repair attempt; names what the validator
+              // rejected so the model corrects the shape instead of guessing.
+              previousAttemptRejectedBecause: repairHint,
             }),
           },
         ],
@@ -135,7 +141,6 @@ async function runAgentTask<T>({
   promptVersion,
   schema,
   buildMockOutput,
-  liveOutputSchema,
   verifiedContext,
   knowledgeIds,
   faultMode,
@@ -145,7 +150,6 @@ async function runAgentTask<T>({
   promptVersion: string;
   schema: ZodType<T>;
   buildMockOutput: (knowledge: KnowledgeSnippet[]) => unknown;
-  liveOutputSchema: unknown;
   verifiedContext: unknown;
   knowledgeIds: string[];
   faultMode: FaultMode;
@@ -167,74 +171,98 @@ async function runAgentTask<T>({
     source,
   }));
 
-  const startedAt = Date.now();
-  let rawResponse = '';
-  let parsedOutput: T | null = null;
-  let validationStatus = 'passed';
-  let errorCode: string | null = null;
+  // The contract sent to the model is generated from the schema that will judge
+  // its answer, so the two cannot drift. Hand-written hints like
+  // `suggestedDescription: 'string|null'` left the model guessing at the shape.
+  const wireSchema = toJSONSchema(schema);
 
-  try {
-    const modelResponse =
-      mode === 'live'
-        ? await liveJsonResponse({
-            task: taskType,
-            verifiedContext,
-            outputSchema: liveOutputSchema,
-            knowledge,
-            timeoutMs,
-          })
-        : await mockResponse(buildMockOutput(knowledge), timeoutMs, faultMode);
-    rawResponse = applyResponseFault(modelResponse, taskType, faultMode);
-    parsedOutput = validateAgentOutput({
-      raw: rawResponse,
-      schema,
-      validRuleIds,
-      validEvidenceRefs,
-    });
-  } catch (error) {
-    validationStatus = 'rejected';
-    errorCode =
-      error instanceof AgentValidationError
-        ? error.code
-        : error instanceof Error
-          ? error.message
-          : 'MODEL_UNAVAILABLE';
-  }
+  const inputDigest = createHash('sha256')
+    .update(JSON.stringify(verifiedContext))
+    .digest('hex')
+    .slice(0, 16);
 
-  const latencyMs = Date.now() - startedAt;
-  await recordAiRun({
-    id: crypto.randomUUID(),
-    caseId,
-    taskType,
-    promptVersion,
-    model,
-    inputDigest: createHash('sha256')
-      .update(JSON.stringify(verifiedContext))
-      .digest('hex')
-      .slice(0, 16),
-    rawResponse,
-    parsedOutput,
-    validationStatus,
-    errorCode,
-    latencyMs,
-    createdAt: new Date().toISOString(),
-  });
+  let attempt = 0;
+  let lastErrorCode: string | null = null;
+  let lastLatencyMs = 0;
+  let repairHint: string | undefined;
 
-  if (!parsedOutput) {
-    return {
-      ok: false,
-      errorCode,
-      fallback: fallbackMessages[taskType],
-      latencyMs,
+  while (attempt < MAX_ATTEMPTS) {
+    attempt += 1;
+    const startedAt = Date.now();
+    let rawResponse = '';
+    let parsedOutput: T | null = null;
+    let errorCode: string | null = null;
+    let errorDetail = '';
+
+    try {
+      const modelResponse =
+        mode === 'live'
+          ? await liveJsonResponse({
+              task: taskType,
+              verifiedContext,
+              outputSchema: wireSchema,
+              knowledge,
+              timeoutMs,
+              repairHint,
+            })
+          : await mockResponse(buildMockOutput(knowledge), timeoutMs, faultMode);
+      rawResponse = applyResponseFault(modelResponse, taskType, faultMode);
+      parsedOutput = validateAgentOutput({
+        raw: rawResponse,
+        schema,
+        validRuleIds,
+        validEvidenceRefs,
+      });
+    } catch (error) {
+      errorCode =
+        error instanceof AgentValidationError
+          ? error.code
+          : error instanceof Error
+            ? error.message
+            : 'MODEL_UNAVAILABLE';
+      errorDetail = error instanceof Error ? error.message : String(error);
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    // Every attempt is recorded, including the rejected one, so the evidence
+    // panel shows that a bad output was caught rather than quietly retried.
+    await recordAiRun({
+      id: crypto.randomUUID(),
+      caseId,
+      taskType,
+      promptVersion: `${promptVersion}#${attempt}`,
       model,
-      mode,
-      knowledge: citedKnowledge,
-    };
+      inputDigest,
+      rawResponse,
+      parsedOutput,
+      validationStatus: parsedOutput ? 'passed' : 'rejected',
+      errorCode,
+      latencyMs,
+      createdAt: new Date().toISOString(),
+    });
+
+    if (parsedOutput) {
+      return {
+        ok: true,
+        output: parsedOutput,
+        latencyMs,
+        model,
+        mode,
+        knowledge: citedKnowledge,
+      };
+    }
+
+    lastErrorCode = errorCode;
+    lastLatencyMs = latencyMs;
+    if (!shouldRepair({ mode, faultMode, errorCode, attempt })) break;
+    repairHint = `${errorCode}: ${errorDetail}`;
   }
+
   return {
-    ok: true,
-    output: parsedOutput,
-    latencyMs,
+    ok: false,
+    errorCode: lastErrorCode,
+    fallback: fallbackMessages[taskType],
+    latencyMs: lastLatencyMs,
     model,
     mode,
     knowledge: citedKnowledge,
@@ -269,14 +297,6 @@ export async function runFormAssist(
         ],
         requiresUserConfirmation: true,
       }) satisfies FormAssistOutput,
-    liveOutputSchema: {
-      taskType: 'form_assist',
-      suggestedDescription: 'string|null',
-      missingFields: ['string'],
-      explanation: 'string',
-      evidenceRefs: ['FORM:description', 'KB-VENUE-001'],
-      requiresUserConfirmation: true,
-    },
     verifiedContext: application,
     knowledgeIds: selectKnowledgeIds({ taskType: 'form_assist', application }),
     faultMode,
@@ -317,15 +337,6 @@ export async function runReviewBrief(
     promptVersion: 'review-brief-1.1',
     schema: reviewBriefSchema,
     buildMockOutput,
-    liveOutputSchema: {
-      taskType: 'review_brief',
-      caseSummary: 'string',
-      passedRules: [{ ruleId: 'string', evidenceRefs: ['string'] }],
-      failedRules: [{ ruleId: 'string', evidenceRefs: ['string'] }],
-      missingInformation: ['string'],
-      humanJudgementItems: ['string'],
-      requiresHumanReview: true,
-    },
     verifiedContext: { application, validation },
     knowledgeIds: selectKnowledgeIds({
       taskType: 'review_brief',
@@ -367,13 +378,6 @@ export async function runReturnMessageDraft(
     promptVersion: 'return-message-1.1',
     schema: returnMessageSchema,
     buildMockOutput,
-    liveOutputSchema: {
-      taskType: 'return_message_draft',
-      message: 'string',
-      requiredActions: ['string'],
-      evidenceRefs: ['string'],
-      requiresHumanConfirmation: true,
-    },
     verifiedContext: { application, validation },
     knowledgeIds: selectKnowledgeIds({
       taskType: 'return_message_draft',
