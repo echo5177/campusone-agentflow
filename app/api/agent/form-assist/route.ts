@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { runFormAssist } from '@/lib/agent/provider';
 import { faultModes } from '@/lib/agent/types';
+import { contextJson, readContext } from '@/lib/server/session';
 
 const requestSchema = z.object({
   application: z.object({
@@ -27,8 +28,10 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  return Response.json(
-    await runFormAssist(parsed.data.application, parsed.data.faultMode),
+  const context = readContext(request);
+  return contextJson(
+    context,
+    await runFormAssist(context.caseId, parsed.data.application, parsed.data.faultMode),
   );
 }
 

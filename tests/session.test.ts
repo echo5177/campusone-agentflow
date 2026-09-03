@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { canTransition } from '@/lib/domain/state-machine';
 import { caseStatuses } from '@/lib/domain/types';
-import { actorCookie, readActor, switchableRoles } from '@/lib/server/session';
+import {
+  actorCookie,
+  caseIdForSession,
+  readActor,
+  readContext,
+  sessionCookie,
+  switchableRoles,
+} from '@/lib/server/session';
 
 const withCookie = (cookie?: string) =>
   new Request('https://example.test/api/case', {
@@ -61,11 +68,62 @@ describe('actor session', () => {
   });
 });
 
+describe('per-visitor case isolation', () => {
+  const sessionA = 'a'.repeat(32);
+  const sessionB = 'b'.repeat(32);
+
+  it('gives a first-time visitor a session and asks the browser to keep it', () => {
+    const context = readContext(withCookie());
+    expect(context.sessionId).toMatch(/^[0-9a-f]{32}$/);
+    expect(context.caseId).toBe(caseIdForSession(context.sessionId));
+    expect(context.cookies).toHaveLength(1);
+    expect(context.cookies[0]).toContain('campusone_session=');
+    expect(context.cookies[0]).toContain('HttpOnly');
+  });
+
+  it('reuses the case of a returning visitor without re-issuing the cookie', () => {
+    const context = readContext(withCookie(`campusone_session=${sessionA}`));
+    expect(context.sessionId).toBe(sessionA);
+    expect(context.caseId).toBe(caseIdForSession(sessionA));
+    expect(context.cookies).toEqual([]);
+  });
+
+  // Two reviewers opening the submitted link must not share one mutable case.
+  it('keeps two visitors on different cases', () => {
+    const a = readContext(withCookie(`campusone_session=${sessionA}`));
+    const b = readContext(withCookie(`campusone_session=${sessionB}`));
+    expect(a.caseId).not.toBe(b.caseId);
+  });
+
+  it('replaces a malformed session id instead of trusting it', () => {
+    const context = readContext(withCookie('campusone_session=../../etc/passwd'));
+    expect(context.sessionId).not.toBe('../../etc/passwd');
+    expect(context.sessionId).toMatch(/^[0-9a-f]{32}$/);
+    expect(context.cookies).toHaveLength(1);
+  });
+
+  it('carries the actor and the case in one context', () => {
+    const context = readContext(
+      withCookie(`campusone_session=${sessionA}; campusone_actor=admin`),
+    );
+    expect(context).toMatchObject({
+      role: 'admin',
+      actorId: 'admin-zhou',
+      caseId: caseIdForSession(sessionA),
+    });
+  });
+
+  it('scopes the session cookie to the whole site', () => {
+    expect(sessionCookie(sessionA)).toContain('Path=/');
+  });
+});
+
 describe('transition idempotency key', () => {
   // Mirrors lib/server/store.ts. A retried click must produce the same key, and
   // no two steps of the lifecycle may collide onto one key.
+  const caseId = caseIdForSession('c'.repeat(32));
   const key = (version: number, from: string, to: string) =>
-    `CA-2026-0902-01-v${version}-${from}-to-${to}`;
+    `${caseId}-v${version}-${from}-to-${to}`;
 
   it('is stable for a repeated request', () => {
     expect(key(1, 'draft', 'submitted')).toBe(key(1, 'draft', 'submitted'));

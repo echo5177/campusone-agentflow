@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 import { getDb } from '@/db';
 import {
@@ -20,7 +20,11 @@ import type {
   VenueApplication,
 } from '@/lib/domain/types';
 
-export const DEMO_CASE_ID = 'CA-2026-0902-01';
+/**
+ * Every case is scoped to the visitor's session. The deployed demo link is meant
+ * to be opened by several reviewers at once; with one shared global case, one
+ * person clicking 提交申请 would move the workflow under everyone else's feet.
+ */
 
 const now = () => new Date().toISOString();
 
@@ -68,31 +72,32 @@ async function reseedReferenceData() {
   ]);
 }
 
-export async function ensureDemoSeeded() {
+/**
+ * Venues, rules and knowledge are shared by every visitor, so they are seeded
+ * once for the database rather than once per case, and refreshed only when the
+ * reference data version moves.
+ */
+async function ensureReferenceData() {
+  const db = getDb();
+  const [current] = await db.select({ version: rules.version }).from(rules).limit(1);
+  if (current?.version === REFERENCE_DATA_VERSION) return;
+  await reseedReferenceData();
+}
+
+export async function ensureDemoSeeded(caseId: string) {
+  await ensureReferenceData();
   const db = getDb();
   const [existing] = await db
     .select({ id: cases.id })
     .from(cases)
-    .where(eq(cases.id, DEMO_CASE_ID))
+    .where(eq(cases.id, caseId))
     .limit(1);
-  if (existing) {
-    const [staleRule] = await db
-      .select({ version: rules.version })
-      .from(rules)
-      .where(ne(rules.version, REFERENCE_DATA_VERSION))
-      .limit(1);
-    const [anyRule] = await db.select({ id: rules.id }).from(rules).limit(1);
-    if (staleRule || !anyRule) await reseedReferenceData();
-    return;
-  }
+  if (existing) return;
 
   const timestamp = now();
   await db.batch([
-    db.insert(venues).values(demoVenues),
-    db.insert(rules).values(ruleRows()),
-    db.insert(knowledgeDocuments).values(demoKnowledge),
     db.insert(cases).values({
-      id: DEMO_CASE_ID,
+      id: caseId,
       caseType: 'venue_application',
       applicantId: 'student-lin',
       applicantName: '林同学',
@@ -102,8 +107,8 @@ export async function ensureDemoSeeded() {
       updatedAt: timestamp,
     }),
     db.insert(caseVersions).values({
-      id: `${DEMO_CASE_ID}-V1`,
-      caseId: DEMO_CASE_ID,
+      id: `${caseId}-V1`,
+      caseId: caseId,
       version: 1,
       formData: initialApplication,
       createdBy: 'student-lin',
@@ -111,49 +116,49 @@ export async function ensureDemoSeeded() {
     }),
     db.insert(caseEvents).values({
       id: crypto.randomUUID(),
-      caseId: DEMO_CASE_ID,
+      caseId: caseId,
       eventType: 'case_created',
       actorRole: 'student',
       actorId: 'student-lin',
       beforeState: null,
       afterState: 'draft',
       metadata: { version: 1 },
-      idempotencyKey: 'seed-case-created',
+      idempotencyKey: `${caseId}-seed-case-created`,
       createdAt: timestamp,
     }),
   ]);
 }
 
-export async function getDemoSnapshot() {
-  await ensureDemoSeeded();
+export async function getDemoSnapshot(caseId: string) {
+  await ensureDemoSeeded(caseId);
   const db = getDb();
   const [caseRow] = await db
     .select()
     .from(cases)
-    .where(eq(cases.id, DEMO_CASE_ID));
+    .where(eq(cases.id, caseId));
   const [currentVersion] = await db
     .select()
     .from(caseVersions)
     .where(
       and(
-        eq(caseVersions.caseId, DEMO_CASE_ID),
+        eq(caseVersions.caseId, caseId),
         eq(caseVersions.version, caseRow.currentVersion),
       ),
     );
   const versionRows = await db
     .select()
     .from(caseVersions)
-    .where(eq(caseVersions.caseId, DEMO_CASE_ID))
+    .where(eq(caseVersions.caseId, caseId))
     .orderBy(desc(caseVersions.version));
   const eventRows = await db
     .select()
     .from(caseEvents)
-    .where(eq(caseEvents.caseId, DEMO_CASE_ID))
+    .where(eq(caseEvents.caseId, caseId))
     .orderBy(asc(caseEvents.createdAt));
   const runRows = await db
     .select()
     .from(aiRuns)
-    .where(eq(aiRuns.caseId, DEMO_CASE_ID))
+    .where(eq(aiRuns.caseId, caseId))
     .orderBy(desc(aiRuns.createdAt));
 
   return {
@@ -169,15 +174,16 @@ export async function getDemoSnapshot() {
 }
 
 export async function updateDraft(
+  caseId: string,
   application: VenueApplication,
   actor: { role: ActorRole; actorId: string },
 ) {
-  await ensureDemoSeeded();
+  await ensureDemoSeeded(caseId);
   const db = getDb();
   const [caseRow] = await db
     .select()
     .from(cases)
-    .where(eq(cases.id, DEMO_CASE_ID));
+    .where(eq(cases.id, caseId));
   if (caseRow.status !== 'draft') {
     throw new Error(`CASE_NOT_EDITABLE:${caseRow.status}`);
   }
@@ -189,48 +195,50 @@ export async function updateDraft(
     .set({ formData: application, createdBy: actor.actorId })
     .where(
       and(
-        eq(caseVersions.caseId, DEMO_CASE_ID),
+        eq(caseVersions.caseId, caseId),
         eq(caseVersions.version, caseRow.currentVersion),
       ),
     );
   await db
     .update(cases)
     .set({ updatedAt: now() })
-    .where(eq(cases.id, DEMO_CASE_ID));
-  return getDemoSnapshot();
+    .where(eq(cases.id, caseId));
+  return getDemoSnapshot(caseId);
 }
 
 export async function transitionCase({
+  caseId,
   to,
   role,
   actorId,
   metadata = {},
   revisedApplication,
 }: {
+  caseId: string;
   to: CaseStatus;
   role: ActorRole;
   actorId: string;
   metadata?: Record<string, unknown>;
   revisedApplication?: VenueApplication;
 }) {
-  await ensureDemoSeeded();
+  await ensureDemoSeeded(caseId);
   const db = getDb();
   const [caseRow] = await db
     .select()
     .from(cases)
-    .where(eq(cases.id, DEMO_CASE_ID));
+    .where(eq(cases.id, caseId));
 
   // Derived server-side from the state the transition starts at, so a retried or
   // double-clicked request carries the same key and collapses into one event.
   // A client-supplied key with a random suffix — as this used to send — made the
   // idempotency index decorative.
-  const idempotencyKey = `${DEMO_CASE_ID}-v${caseRow.currentVersion}-${caseRow.status}-to-${to}`;
+  const idempotencyKey = `${caseId}-v${caseRow.currentVersion}-${caseRow.status}-to-${to}`;
   const [duplicate] = await db
     .select({ id: caseEvents.id })
     .from(caseEvents)
     .where(eq(caseEvents.idempotencyKey, idempotencyKey))
     .limit(1);
-  if (duplicate) return getDemoSnapshot();
+  if (duplicate) return getDemoSnapshot(caseId);
 
   assertTransition(caseRow.status, to, role);
 
@@ -242,10 +250,10 @@ export async function transitionCase({
   const updateCase = db
     .update(cases)
     .set({ status: to, currentVersion: nextVersion, updatedAt: timestamp })
-    .where(eq(cases.id, DEMO_CASE_ID));
+    .where(eq(cases.id, caseId));
   const insertEvent = db.insert(caseEvents).values({
     id: crypto.randomUUID(),
-    caseId: DEMO_CASE_ID,
+    caseId: caseId,
     eventType: `${caseRow.status}_to_${to}`,
     actorRole: role,
     actorId,
@@ -261,8 +269,8 @@ export async function transitionCase({
       updateCase,
       insertEvent,
       db.insert(caseVersions).values({
-        id: `${DEMO_CASE_ID}-V${nextVersion}`,
-        caseId: DEMO_CASE_ID,
+        id: `${caseId}-V${nextVersion}`,
+        caseId: caseId,
         version: nextVersion,
         formData: revisedApplication,
         createdBy: actorId,
@@ -272,22 +280,20 @@ export async function transitionCase({
   } else {
     await db.batch([updateCase, insertEvent]);
   }
-  return getDemoSnapshot();
+  return getDemoSnapshot(caseId);
 }
 
-export async function resetDemo() {
+/** Clears only this session's case. Other visitors' demos are untouched. */
+export async function resetDemo(caseId: string) {
   const db = getDb();
   await db.batch([
-    db.delete(aiRuns),
-    db.delete(caseEvents),
-    db.delete(caseVersions),
-    db.delete(cases),
-    db.delete(knowledgeDocuments),
-    db.delete(rules),
-    db.delete(venues),
+    db.delete(aiRuns).where(eq(aiRuns.caseId, caseId)),
+    db.delete(caseEvents).where(eq(caseEvents.caseId, caseId)),
+    db.delete(caseVersions).where(eq(caseVersions.caseId, caseId)),
+    db.delete(cases).where(eq(cases.id, caseId)),
   ]);
-  await ensureDemoSeeded();
-  return getDemoSnapshot();
+  await ensureDemoSeeded(caseId);
+  return getDemoSnapshot(caseId);
 }
 
 export async function recordAiRun(run: typeof aiRuns.$inferInsert) {
@@ -298,7 +304,6 @@ export async function recordAiRun(run: typeof aiRuns.$inferInsert) {
 /** Loads the knowledge documents an agent task is allowed to read, in catalog order. */
 export async function getKnowledgeByIds(ids: string[]): Promise<KnowledgeSnippet[]> {
   if (ids.length === 0) return [];
-  await ensureDemoSeeded();
   const db = getDb();
   const rows = await db
     .select()

@@ -16,11 +16,7 @@ import {
 } from './schemas';
 import type { AgentRunResult, AgentTaskType, FaultMode } from './types';
 import { AgentValidationError, validateAgentOutput } from './validator';
-import {
-  getKnowledgeByIds,
-  recordAiRun,
-  DEMO_CASE_ID,
-} from '@/lib/server/store';
+import { getKnowledgeByIds, recordAiRun } from '@/lib/server/store';
 import type { ValidationResult, VenueApplication } from '@/lib/domain/types';
 
 export type { FaultMode } from './types';
@@ -143,6 +139,7 @@ async function runAgentTask<T>({
   verifiedContext,
   knowledgeIds,
   faultMode,
+  caseId,
 }: {
   taskType: AgentTaskType;
   promptVersion: string;
@@ -152,6 +149,7 @@ async function runAgentTask<T>({
   verifiedContext: unknown;
   knowledgeIds: string[];
   faultMode: FaultMode;
+  caseId: string;
 }): Promise<AgentRunResult<T>> {
   const runtime = env as RuntimeEnv;
   const mode = runtime.LLM_MODE === 'live' ? 'live' : 'mock';
@@ -206,7 +204,7 @@ async function runAgentTask<T>({
   const latencyMs = Date.now() - startedAt;
   await recordAiRun({
     id: crypto.randomUUID(),
-    caseId: DEMO_CASE_ID,
+    caseId,
     taskType,
     promptVersion,
     model,
@@ -244,6 +242,7 @@ async function runAgentTask<T>({
 }
 
 export async function runFormAssist(
+  caseId: string,
   application: VenueApplication,
   faultMode: FaultMode = 'none',
 ) {
@@ -281,10 +280,12 @@ export async function runFormAssist(
     verifiedContext: application,
     knowledgeIds: selectKnowledgeIds({ taskType: 'form_assist', application }),
     faultMode,
+    caseId,
   });
 }
 
 export async function runReviewBrief(
+  caseId: string,
   application: VenueApplication,
   validation: ValidationResult,
   faultMode: FaultMode = 'none',
@@ -332,10 +333,12 @@ export async function runReviewBrief(
       validation,
     }),
     faultMode,
+    caseId,
   });
 }
 
 export async function runReturnMessageDraft(
+  caseId: string,
   application: VenueApplication,
   validation: ValidationResult,
   faultMode: FaultMode = 'none',
@@ -378,5 +381,6 @@ export async function runReturnMessageDraft(
       validation,
     }),
     faultMode,
+    caseId,
   });
 }

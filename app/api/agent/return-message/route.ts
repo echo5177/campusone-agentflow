@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { runReturnMessageDraft } from '@/lib/agent/provider';
 import { faultModes } from '@/lib/agent/types';
+import { contextJson, readContext } from '@/lib/server/session';
 import { demoBookings, demoVenues } from '@/lib/demo/data';
 import { validateVenueApplication } from '@/lib/domain/rules';
 
@@ -28,9 +29,16 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return Response.json({ error: 'INVALID_REQUEST', issues: parsed.error.issues }, { status: 400 });
   }
+  const context = readContext(request);
   const venue = demoVenues.find((item) => item.id === parsed.data.application.venueId);
   const validation = validateVenueApplication(parsed.data.application, venue, demoBookings);
-  return Response.json(
-    await runReturnMessageDraft(parsed.data.application, validation, parsed.data.faultMode),
+  return contextJson(
+    context,
+    await runReturnMessageDraft(
+      context.caseId,
+      parsed.data.application,
+      validation,
+      parsed.data.faultMode,
+    ),
   );
 }
