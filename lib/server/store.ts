@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 import { getDb } from '@/db';
 import {
@@ -10,7 +10,9 @@ import {
   rules,
   venues,
 } from '@/db/schema';
+import type { KnowledgeSnippet } from '@/lib/agent/knowledge';
 import { demoKnowledge, demoVenues } from '@/lib/demo/data';
+import { ruleCatalog } from '@/lib/domain/rules';
 import { assertTransition } from '@/lib/domain/state-machine';
 import type {
   ActorRole,
@@ -36,13 +38,6 @@ const initialApplication: VenueApplication = {
   equipment: ['投影', '无线麦克风', '基础扩声'],
 };
 
-const demoRules = [
-  ['VENUE-REQ-001', '必填字段完整'],
-  ['VENUE-TIME-001', '时间顺序有效'],
-  ['VENUE-CAP-001', '场地容量充足'],
-  ['VENUE-SLOT-001', '申请时段无冲突'],
-  ['VENUE-EQP-001', '设备需求可满足'],
-] as const;
 
 export async function ensureDemoSeeded() {
   const db = getDb();
@@ -57,9 +52,9 @@ export async function ensureDemoSeeded() {
   await db.batch([
     db.insert(venues).values(demoVenues),
     db.insert(rules).values(
-      demoRules.map(([id, label]) => ({
-        id,
-        label,
+      ruleCatalog.map((rule) => ({
+        id: rule.id,
+        label: rule.label,
         version: '2026.09',
         source: '模拟场地管理规则',
         enabled: true,
@@ -258,4 +253,19 @@ export async function resetDemo() {
 export async function recordAiRun(run: typeof aiRuns.$inferInsert) {
   const db = getDb();
   await db.insert(aiRuns).values(run);
+}
+
+/** Loads the knowledge documents an agent task is allowed to read, in catalog order. */
+export async function getKnowledgeByIds(ids: string[]): Promise<KnowledgeSnippet[]> {
+  if (ids.length === 0) return [];
+  await ensureDemoSeeded();
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(knowledgeDocuments)
+    .where(inArray(knowledgeDocuments.id, ids));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids
+    .map((id) => byId.get(id))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
 }

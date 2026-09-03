@@ -8,8 +8,18 @@ export const agentTaskTypes = [
 ] as const;
 export type AgentTaskType = (typeof agentTaskTypes)[number];
 
+/** A knowledge document the task was allowed to read, echoed back for the UI. */
+export type CitedKnowledge = { id: string; title: string; source: string };
+
 export type AgentRunResult<T> =
-  | { ok: true; output: T; latencyMs: number; model: string; mode: 'mock' | 'live' }
+  | {
+      ok: true;
+      output: T;
+      latencyMs: number;
+      model: string;
+      mode: 'mock' | 'live';
+      knowledge: CitedKnowledge[];
+    }
   | {
       ok: false;
       errorCode: string | null;
@@ -17,4 +27,5 @@ export type AgentRunResult<T> =
       latencyMs: number;
       model: string;
       mode: 'mock' | 'live';
+      knowledge: CitedKnowledge[];
     };

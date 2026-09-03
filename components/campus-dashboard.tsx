@@ -74,11 +74,20 @@ type DemoSnapshot = {
   }>;
   venues: Venue[];
   rules: Array<{ id: string; label: string; version: string }>;
-  knowledge: Array<{ id: string; title: string; source: string }>;
+  knowledge: Array<{ id: string; title: string; source: string; content: string }>;
 };
 
+type CitedKnowledge = { id: string; title: string; source: string };
+
 type AgentResult<T> =
-  | { ok: true; output: T; latencyMs: number; model: string; mode: 'mock' | 'live' }
+  | {
+      ok: true;
+      output: T;
+      latencyMs: number;
+      model: string;
+      mode: 'mock' | 'live';
+      knowledge: CitedKnowledge[];
+    }
   | {
       ok: false;
       errorCode: string | null;
@@ -86,6 +95,7 @@ type AgentResult<T> =
       latencyMs: number;
       model: string;
       mode: 'mock' | 'live';
+      knowledge: CitedKnowledge[];
     };
 
 type AiPresentation =
@@ -127,6 +137,22 @@ const statusMeta: Record<CaseStatus, { label: string; progress: number; step: nu
 };
 
 const workflowSteps = ['填写申请', '规则预检', '人工审核', '结果归档'];
+
+function KnowledgeTrail({ knowledge }: { knowledge: CitedKnowledge[] }) {
+  if (knowledge.length === 0) return null;
+  return (
+    <div className="mt-3 border-t border-white/10 pt-3">
+      <p className="text-[10px] uppercase tracking-wide text-slate-400">本次检索到的知识依据</p>
+      <ul className="mt-1.5 space-y-1">
+        {knowledge.map((document) => (
+          <li key={document.id} className="text-[11px] leading-5 text-slate-300">
+            <span className="font-mono text-teal-300">{document.id}</span> · {document.title}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 const equipmentOptions = ['投影', '无线麦克风', '基础扩声', '舞台灯光', '直播', '视频会议'];
 
 function applicationForRequest(application: VenueApplication): VenueApplication {
@@ -159,6 +185,7 @@ function formatDate(value: string) {
 const dashboardSections = [
   { id: 'application', label: '场地申请' },
   { id: 'timeline', label: '事务时间轴' },
+  { id: 'knowledge', label: '知识库' },
   { id: 'evidence', label: 'AI 运行证据' },
 ] as const;
 
@@ -682,15 +709,29 @@ export function CampusDashboard() {
 
                 {aiPresentation && !aiPresentation.result.ok && <div className="rounded-xl border border-rose-300/20 bg-rose-300/8 p-4"><div className="flex items-center gap-2 text-sm font-medium text-rose-100"><AlertTriangle className="size-4" />输出已拒绝 · {aiPresentation.result.errorCode}</div><p className="mt-2 text-xs leading-6 text-slate-300">{aiPresentation.result.fallback}</p></div>}
 
-                {aiPresentation?.kind === 'form' && aiPresentation.result.ok && <div className="rounded-xl border border-teal-300/20 bg-teal-300/8 p-4"><p className="text-xs font-medium text-teal-200">表单整理建议</p><p className="mt-2 text-xs leading-6 text-slate-200">{aiPresentation.result.output.suggestedDescription}</p><p className="mt-3 text-[11px] leading-5 text-slate-400">{aiPresentation.result.output.explanation}</p>{aiPresentation.result.output.suggestedDescription && editable && <Button size="sm" className="mt-3 w-full bg-teal-700 hover:bg-teal-600" onClick={() => updateField('description', aiPresentation.kind === 'form' && aiPresentation.result.ok ? aiPresentation.result.output.suggestedDescription ?? application.description : application.description)}>人工确认并采用</Button>}</div>}
+                {aiPresentation?.kind === 'form' && aiPresentation.result.ok && <div className="rounded-xl border border-teal-300/20 bg-teal-300/8 p-4"><p className="text-xs font-medium text-teal-200">表单整理建议</p><p className="mt-2 text-xs leading-6 text-slate-200">{aiPresentation.result.output.suggestedDescription}</p><p className="mt-3 text-[11px] leading-5 text-slate-400">{aiPresentation.result.output.explanation}</p><KnowledgeTrail knowledge={aiPresentation.result.knowledge} />{aiPresentation.result.output.suggestedDescription && editable && <Button size="sm" className="mt-3 w-full bg-teal-700 hover:bg-teal-600" onClick={() => updateField('description', aiPresentation.kind === 'form' && aiPresentation.result.ok ? aiPresentation.result.output.suggestedDescription ?? application.description : application.description)}>人工确认并采用</Button>}</div>}
 
-                {aiPresentation?.kind === 'review' && aiPresentation.result.ok && <div className="rounded-xl border border-teal-300/20 bg-teal-300/8 p-4"><p className="text-xs font-medium text-teal-200">审核摘要 · 等待管理员判断</p><p className="mt-2 text-xs leading-6 text-slate-200">{aiPresentation.result.output.caseSummary}</p><ul className="mt-3 space-y-1 text-[11px] leading-5 text-slate-400">{aiPresentation.result.output.humanJudgementItems.map((item) => <li key={item}>• {item}</li>)}</ul></div>}
+                {aiPresentation?.kind === 'review' && aiPresentation.result.ok && <div className="rounded-xl border border-teal-300/20 bg-teal-300/8 p-4"><p className="text-xs font-medium text-teal-200">审核摘要 · 等待管理员判断</p><p className="mt-2 text-xs leading-6 text-slate-200">{aiPresentation.result.output.caseSummary}</p><ul className="mt-3 space-y-1 text-[11px] leading-5 text-slate-400">{aiPresentation.result.output.humanJudgementItems.map((item) => <li key={item}>• {item}</li>)}</ul><KnowledgeTrail knowledge={aiPresentation.result.knowledge} /></div>}
 
-                {aiPresentation?.kind === 'return' && aiPresentation.result.ok && <div className="rounded-xl border border-teal-300/20 bg-teal-300/8 p-4"><p className="text-xs font-medium text-teal-200">退回通知草稿 · 等待管理员确认</p><p className="mt-2 text-xs leading-6 text-slate-200">{aiPresentation.result.output.message}</p><ul className="mt-3 space-y-1 text-[11px] leading-5 text-slate-400">{aiPresentation.result.output.requiredActions.map((item) => <li key={item}>• {item}</li>)}</ul></div>}
+                {aiPresentation?.kind === 'return' && aiPresentation.result.ok && <div className="rounded-xl border border-teal-300/20 bg-teal-300/8 p-4"><p className="text-xs font-medium text-teal-200">退回通知草稿 · 等待管理员确认</p><p className="mt-2 text-xs leading-6 text-slate-200">{aiPresentation.result.output.message}</p><ul className="mt-3 space-y-1 text-[11px] leading-5 text-slate-400">{aiPresentation.result.output.requiredActions.map((item) => <li key={item}>• {item}</li>)}</ul><KnowledgeTrail knowledge={aiPresentation.result.knowledge} /></div>}
 
                 <div className="flex flex-wrap gap-2">{status === 'draft' && <Button variant="outline" className="flex-1 border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => runAgent('form')} disabled={busy !== null}>表单辅助</Button>}{(status === 'submitted' || status === 'under_review') && <Button variant="outline" className="flex-1 border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => runAgent('review')} disabled={busy !== null}>审核摘要</Button>}{status === 'returned' && <Button variant="outline" className="flex-1 border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => runAgent('return')} disabled={busy !== null}>退回通知</Button>}</div>
               </CardContent>
             </Card>
+
+            <Card id="knowledge" className="scroll-mt-24"><CardHeader><CardTitle className="text-sm">场地事务知识库</CardTitle><CardDescription>每条规则都绑定制度依据；AI 只能读取当前任务命中的条目。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.knowledge.map((document) => {
+              const cited = aiPresentation?.result.knowledge.some((item) => item.id === document.id) ?? false;
+              return (
+                <div key={document.id} className={`rounded-lg border p-3 ${cited ? 'border-teal-300 bg-teal-50/70' : 'bg-white'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-xs font-medium">{document.title}</p>
+                    {cited && <Badge variant="secondary" className="shrink-0 text-[10px]">本次已引用</Badge>}
+                  </div>
+                  <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">{document.content}</p>
+                  <p className="mt-2 font-mono text-[10px] text-slate-500">{document.id} · {document.source}</p>
+                </div>
+              );
+            })}</CardContent></Card>
 
             <Card id="evidence" className="scroll-mt-24"><CardHeader><CardTitle className="text-sm">最近 AI 运行证据</CardTitle><CardDescription>保存摘要、模型、耗时、验证状态与错误码；不保存 API Key。</CardDescription></CardHeader><CardContent className="space-y-2">{snapshot.aiRuns.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">尚无 AI 运行记录</p> : snapshot.aiRuns.slice(0, 5).map((run) => <div key={run.id} className="rounded-lg border bg-white p-3"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">{run.taskType}</span><Badge variant={run.validationStatus === 'passed' ? 'secondary' : 'destructive'}>{run.validationStatus === 'passed' ? '已通过' : '已拒绝'}</Badge></div><div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>{run.model} · {run.latencyMs}ms</span><span>{run.errorCode ?? formatDate(run.createdAt)}</span></div></div>)}</CardContent></Card>
 

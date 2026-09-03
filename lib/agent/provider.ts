@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { env } from 'cloudflare:workers';
 import type { ZodType } from 'zod';
 
+import { validEvidenceRefs, validRuleIds } from './evidence';
 import { applyResponseFault, faultTimeoutBudget } from './faults';
+import { selectKnowledgeIds, type KnowledgeSnippet } from './knowledge';
 import {
   formAssistSchema,
   reviewBriefSchema,
@@ -14,7 +16,11 @@ import {
 } from './schemas';
 import type { AgentRunResult, AgentTaskType, FaultMode } from './types';
 import { AgentValidationError, validateAgentOutput } from './validator';
-import { recordAiRun, DEMO_CASE_ID } from '@/lib/server/store';
+import {
+  getKnowledgeByIds,
+  recordAiRun,
+  DEMO_CASE_ID,
+} from '@/lib/server/store';
 import type { ValidationResult, VenueApplication } from '@/lib/domain/types';
 
 export type { FaultMode } from './types';
@@ -27,41 +33,11 @@ type RuntimeEnv = Cloudflare.Env & {
   LLM_TIMEOUT_MS?: string;
 };
 
-const validRuleIds = new Set([
-  'VENUE-REQ-001',
-  'VENUE-TIME-001',
-  'VENUE-CAP-001',
-  'VENUE-SLOT-001',
-  'VENUE-EQP-001',
-]);
-
-const validEvidenceRefs = new Set([
-  'FORM-SCHEMA-1.2',
-  'FORM:description',
-  'FORM:activityName',
-  'FORM:attendees',
-  'FORM:startTime',
-  'FORM:endTime',
-  'FORM:venueId',
-  'FORM:contactName',
-  'FORM:contactPhone',
-  'VENUE:activity-center:capacity',
-  'VENUE:activity-center:equipment',
-  'VENUE:lecture-hall:capacity',
-  'VENUE:lecture-hall:equipment',
-  'VENUE:seminar-room:capacity',
-  'VENUE:seminar-room:equipment',
-  'BOOKING:迎新志愿者培训',
-  'BOOKING:新生第一课',
-  'KB-VENUE-001',
-  'KB-VENUE-002',
-  'KB-SAFETY-001',
-]);
-
 const fallbackMessages: Record<AgentTaskType, string> = {
   form_assist:
     'AI 辅助暂时不可用。请根据字段说明完成填写，系统仍会执行必填项和场地规则检查。',
-  review_brief: 'AI 辅助结果未通过校验，已安全丢弃。规则校验和人工办理仍可继续。',
+  review_brief:
+    'AI 辅助结果未通过校验，已安全丢弃。规则校验和人工办理仍可继续。',
   return_message_draft:
     'AI 辅助结果未通过校验，已安全丢弃。规则校验和人工办理仍可继续。',
 };
@@ -70,16 +46,21 @@ async function liveJsonResponse({
   task,
   verifiedContext,
   outputSchema,
+  knowledge,
   timeoutMs,
 }: {
   task: string;
   verifiedContext: unknown;
   outputSchema: unknown;
+  knowledge: KnowledgeSnippet[];
   timeoutMs: number;
 }) {
   const runtime = env as RuntimeEnv;
   if (!runtime.LLM_API_KEY) throw new Error('MODEL_KEY_MISSING');
-  const base = (runtime.LLM_API_BASE ?? 'https://api.deepseek.com').replace(/\/$/, '');
+  const base = (runtime.LLM_API_BASE ?? 'https://api.deepseek.com').replace(
+    /\/$/,
+    '',
+  );
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -104,12 +85,12 @@ async function liveJsonResponse({
             content: JSON.stringify({
               task,
               verifiedContext,
-              knowledge: [
-                {
-                  id: 'KB-VENUE-001',
-                  text: '申请必须填写活动、组织、时间、人数、负责人和联系方式。',
-                },
-              ],
+              knowledge: knowledge.map((document) => ({
+                id: document.id,
+                title: document.title,
+                source: document.source,
+                text: document.content,
+              })),
               outputSchema,
             }),
           },
@@ -136,7 +117,11 @@ async function liveJsonResponse({
  * Mock mode waits out the same shrunk budget a live run would abort on, so the
  * recorded latency is a real elapsed time rather than a fabricated number.
  */
-async function mockResponse(mockOutput: unknown, timeoutMs: number, faultMode: FaultMode) {
+async function mockResponse(
+  mockOutput: unknown,
+  timeoutMs: number,
+  faultMode: FaultMode,
+) {
   if (faultMode === 'timeout') {
     await new Promise((resolve) => setTimeout(resolve, timeoutMs));
     throw new Error('MODEL_TIMEOUT');
@@ -153,24 +138,36 @@ async function runAgentTask<T>({
   taskType,
   promptVersion,
   schema,
-  mockOutput,
+  buildMockOutput,
   liveOutputSchema,
   verifiedContext,
+  knowledgeIds,
   faultMode,
 }: {
   taskType: AgentTaskType;
   promptVersion: string;
   schema: ZodType<T>;
-  mockOutput: unknown;
+  buildMockOutput: (knowledge: KnowledgeSnippet[]) => unknown;
   liveOutputSchema: unknown;
   verifiedContext: unknown;
+  knowledgeIds: string[];
   faultMode: FaultMode;
 }): Promise<AgentRunResult<T>> {
   const runtime = env as RuntimeEnv;
   const mode = runtime.LLM_MODE === 'live' ? 'live' : 'mock';
-  const model = mode === 'live' ? runtime.LLM_MODEL ?? 'deepseek-chat' : 'mock-1.0';
+  const model =
+    mode === 'live' ? (runtime.LLM_MODEL ?? 'deepseek-chat') : 'mock-1.0';
   const configuredTimeout = Number(runtime.LLM_TIMEOUT_MS ?? '12000');
   const timeoutMs = faultTimeoutBudget(faultMode, configuredTimeout);
+
+  // Retrieval happens before the timer so a slow database read is not billed to
+  // the model's latency budget, and so mock and live see the same knowledge.
+  const knowledge = await getKnowledgeByIds(knowledgeIds);
+  const citedKnowledge = knowledge.map(({ id, title, source }) => ({
+    id,
+    title,
+    source,
+  }));
 
   const startedAt = Date.now();
   let rawResponse = '';
@@ -185,9 +182,10 @@ async function runAgentTask<T>({
             task: taskType,
             verifiedContext,
             outputSchema: liveOutputSchema,
+            knowledge,
             timeoutMs,
           })
-        : await mockResponse(mockOutput, timeoutMs, faultMode);
+        : await mockResponse(buildMockOutput(knowledge), timeoutMs, faultMode);
     rawResponse = applyResponseFault(modelResponse, taskType, faultMode);
     parsedOutput = validateAgentOutput({
       raw: rawResponse,
@@ -232,9 +230,17 @@ async function runAgentTask<T>({
       latencyMs,
       model,
       mode,
+      knowledge: citedKnowledge,
     };
   }
-  return { ok: true, output: parsedOutput, latencyMs, model, mode };
+  return {
+    ok: true,
+    output: parsedOutput,
+    latencyMs,
+    model,
+    mode,
+    knowledge: citedKnowledge,
+  };
 }
 
 export async function runFormAssist(
@@ -245,23 +251,25 @@ export async function runFormAssist(
     !application.contactName && 'contactName',
     !application.contactPhone && 'contactPhone',
   ].filter((field): field is string => Boolean(field));
-  const mockOutput = {
-    taskType: 'form_assist',
-    suggestedDescription: application.description
-      ? `${application.description.replace(/[。\s]+$/, '')}。活动将按照场地管理要求组织入场、设备使用与结束后的场地恢复。`
-      : null,
-    missingFields,
-    explanation:
-      '仅整理申请人已经提供的活动事实，并提示联系人缺项；没有改变人数、时间、设备或审批状态。',
-    evidenceRefs: ['FORM:description', 'KB-VENUE-001'],
-    requiresUserConfirmation: true,
-  } satisfies FormAssistOutput;
-
   return runAgentTask<FormAssistOutput>({
     taskType: 'form_assist',
-    promptVersion: 'form-assist-1.0',
+    promptVersion: 'form-assist-1.1',
     schema: formAssistSchema,
-    mockOutput,
+    buildMockOutput: (knowledge) =>
+      ({
+        taskType: 'form_assist',
+        suggestedDescription: application.description
+          ? `${application.description.replace(/[。\s]+$/, '')}。活动将按照场地管理要求组织入场、设备使用与结束后的场地恢复。`
+          : null,
+        missingFields,
+        explanation:
+          '仅整理申请人已经提供的活动事实，并提示联系人缺项；没有改变人数、时间、设备或审批状态。',
+        evidenceRefs: [
+          'FORM:description',
+          ...knowledge.map((document) => document.id),
+        ],
+        requiresUserConfirmation: true,
+      }) satisfies FormAssistOutput,
     liveOutputSchema: {
       taskType: 'form_assist',
       suggestedDescription: 'string|null',
@@ -271,6 +279,7 @@ export async function runFormAssist(
       requiresUserConfirmation: true,
     },
     verifiedContext: application,
+    knowledgeIds: selectKnowledgeIds({ taskType: 'form_assist', application }),
     faultMode,
   });
 }
@@ -286,24 +295,27 @@ export async function runReviewBrief(
   const failedRules = validation.results
     .filter((item) => !item.passed)
     .map((item) => ({ ruleId: item.ruleId, evidenceRefs: item.evidenceRefs }));
-  const mockOutput = {
-    taskType: 'review_brief',
-    caseSummary: `${application.organization}申请使用场地举办“${application.activityName}”，预计 ${application.attendees} 人。`,
-    passedRules,
-    failedRules,
-    missingInformation: failedRules.length ? ['请根据未通过规则补充或修正申请信息。'] : [],
-    humanJudgementItems:
-      application.attendees >= 96
-        ? ['预计人数达到场地容量的 80%，请人工复核秩序维护安排。']
-        : ['请人工确认现场联系人和活动内容与实际一致。'],
-    requiresHumanReview: true,
-  } satisfies ReviewBriefOutput;
+  const buildMockOutput = () =>
+    ({
+      taskType: 'review_brief',
+      caseSummary: `${application.organization}申请使用场地举办“${application.activityName}”，预计 ${application.attendees} 人。`,
+      passedRules,
+      failedRules,
+      missingInformation: failedRules.length
+        ? ['请根据未通过规则补充或修正申请信息。']
+        : [],
+      humanJudgementItems:
+        application.attendees >= 96
+          ? ['预计人数达到场地容量的 80%，请人工复核秩序维护安排。']
+          : ['请人工确认现场联系人和活动内容与实际一致。'],
+      requiresHumanReview: true,
+    }) satisfies ReviewBriefOutput;
 
   return runAgentTask<ReviewBriefOutput>({
     taskType: 'review_brief',
-    promptVersion: 'review-brief-1.0',
+    promptVersion: 'review-brief-1.1',
     schema: reviewBriefSchema,
-    mockOutput,
+    buildMockOutput,
     liveOutputSchema: {
       taskType: 'review_brief',
       caseSummary: 'string',
@@ -314,6 +326,11 @@ export async function runReviewBrief(
       requiresHumanReview: true,
     },
     verifiedContext: { application, validation },
+    knowledgeIds: selectKnowledgeIds({
+      taskType: 'review_brief',
+      application,
+      validation,
+    }),
     faultMode,
   });
 }
@@ -324,25 +341,29 @@ export async function runReturnMessageDraft(
   faultMode: FaultMode = 'none',
 ) {
   const failed = validation.results.filter((item) => !item.passed);
-  const mockOutput = {
-    taskType: 'return_message_draft',
-    message: failed.length
-      ? `你提交的“${application.activityName}”暂需修改。请按下列事项补充后重新提交，原申请记录将保留。`
-      : `你提交的“${application.activityName}”需要补充人工审核意见后重新提交，原申请记录将保留。`,
-    requiredActions: failed.length
-      ? failed.map((item) => `${item.ruleId}：${item.message}`)
-      : ['请补充管理员在人工审核中说明的材料。'],
-    evidenceRefs: failed.length
-      ? [...new Set(failed.flatMap((item) => item.evidenceRefs))]
-      : ['KB-VENUE-001'],
-    requiresHumanConfirmation: true,
-  } satisfies ReturnMessageOutput;
+  const buildMockOutput = (knowledge: KnowledgeSnippet[]) =>
+    ({
+      taskType: 'return_message_draft',
+      message: failed.length
+        ? `你提交的“${application.activityName}”暂需修改。请按下列事项补充后重新提交，原申请记录将保留。`
+        : `你提交的“${application.activityName}”需要补充人工审核意见后重新提交，原申请记录将保留。`,
+      requiredActions: failed.length
+        ? failed.map((item) => `${item.ruleId}：${item.message}`)
+        : ['请补充管理员在人工审核中说明的材料。'],
+      evidenceRefs: [
+        ...new Set([
+          ...failed.flatMap((item) => item.evidenceRefs),
+          ...knowledge.map((document) => document.id),
+        ]),
+      ],
+      requiresHumanConfirmation: true,
+    }) satisfies ReturnMessageOutput;
 
   return runAgentTask<ReturnMessageOutput>({
     taskType: 'return_message_draft',
-    promptVersion: 'return-message-1.0',
+    promptVersion: 'return-message-1.1',
     schema: returnMessageSchema,
-    mockOutput,
+    buildMockOutput,
     liveOutputSchema: {
       taskType: 'return_message_draft',
       message: 'string',
@@ -351,6 +372,11 @@ export async function runReturnMessageDraft(
       requiresHumanConfirmation: true,
     },
     verifiedContext: { application, validation },
+    knowledgeIds: selectKnowledgeIds({
+      taskType: 'return_message_draft',
+      application,
+      validation,
+    }),
     faultMode,
   });
 }

@@ -23,6 +23,23 @@ export type VenueApplication = {
   equipment: string[];
 };
 
+/**
+ * Field names the agent may cite as `FORM:<field>` evidence. `satisfies` blocks
+ * invented names; `tests/evidence.test.ts` blocks missing ones.
+ */
+export const venueApplicationFields = [
+  'activityName',
+  'organization',
+  'venueId',
+  'attendees',
+  'startTime',
+  'endTime',
+  'description',
+  'contactName',
+  'contactPhone',
+  'equipment',
+] as const satisfies readonly (keyof VenueApplication)[];
+
 export type Venue = {
   id: string;
   name: string;
