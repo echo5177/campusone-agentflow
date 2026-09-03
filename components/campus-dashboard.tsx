@@ -50,6 +50,7 @@ import type {
   Venue,
   VenueApplication,
 } from '@/lib/domain/types';
+import type { SwitchableRole } from '@/lib/server/session';
 
 type DemoSnapshot = {
   case: { id: string; status: CaseStatus; currentVersion: number; updatedAt: string };
@@ -137,6 +138,8 @@ const statusMeta: Record<CaseStatus, { label: string; progress: number; step: nu
 };
 
 const workflowSteps = ['填写申请', '规则预检', '人工审核', '结果归档'];
+const roleLabels: Record<SwitchableRole, string> = { student: '申请人', admin: '管理员' };
+const switchableRoleOptions: SwitchableRole[] = ['student', 'admin'];
 
 function KnowledgeTrail({ knowledge }: { knowledge: CitedKnowledge[] }) {
   if (knowledge.length === 0) return null;
@@ -200,6 +203,7 @@ export function CampusDashboard() {
   const [busy, setBusy] = useState<string | null>('initial');
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [activeSection, setActiveSection] = useState<DashboardSection>('application');
+  const [actorRole, setActorRole] = useState<SwitchableRole>('student');
   const applicationRef = useRef(application);
   const dashboardReady = Boolean(snapshot && application);
 
@@ -279,8 +283,12 @@ export function CampusDashboard() {
   }, []);
 
   const reload = useCallback(async () => {
-    const next = await fetchJson<DemoSnapshot>('/api/demo');
+    const [next, actor] = await Promise.all([
+      fetchJson<DemoSnapshot>('/api/demo'),
+      fetchJson<{ role: SwitchableRole }>('/api/demo/role'),
+    ]);
     applySnapshot(next);
+    setActorRole(actor.role);
   }, [applySnapshot]);
 
   useEffect(() => {
@@ -407,7 +415,19 @@ export function CampusDashboard() {
 
   const status = snapshot?.case.status ?? 'draft';
   const meta = statusMeta[status];
-  const editable = status === 'draft';
+  const isStudent = actorRole === 'student';
+  const isAdmin = actorRole === 'admin';
+  // Mirrors the server-side state machine; the server is still the authority.
+  const editable = status === 'draft' && isStudent;
+  // Mirrors the buttons rendered below, one branch per role, so the empty-state
+  // hint cannot drift away from what is actually on screen.
+  const hasRoleAction =
+    (isStudent && (status === 'draft' || status === 'returned')) ||
+    (isAdmin &&
+      (status === 'submitted' ||
+        status === 'under_review' ||
+        status === 'returned' ||
+        status === 'approved'));
 
   const updateField = <K extends keyof VenueApplication>(
     field: K,
@@ -430,6 +450,22 @@ export function CampusDashboard() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const switchRole = async (role: SwitchableRole) => {
+    await runWithBusy(`role-${role}`, async () => {
+      const next = await fetchJson<{ role: SwitchableRole }>('/api/demo/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+      setActorRole(next.role);
+      setAiPresentation(null);
+      setNotice({
+        tone: 'success',
+        text: `当前操作身份已切换为“${roleLabels[next.role]}”。后端只承认这个身份，请求体里的角色字段会被忽略。`,
+      });
+    });
   };
 
   const saveDraft = async () => {
@@ -495,11 +531,7 @@ export function CampusDashboard() {
     });
   };
 
-  const transition = async (
-    to: CaseStatus,
-    role: ActorRole,
-    metadata: Record<string, unknown> = {},
-  ) => {
+  const transition = async (to: CaseStatus, metadata: Record<string, unknown> = {}) => {
     if (!application) return;
     await runWithBusy(`transition-${to}`, async () => {
       if (to === 'submitted') {
@@ -522,9 +554,6 @@ export function CampusDashboard() {
         body: JSON.stringify({
           action: 'transition',
           to,
-          role,
-          actorId: role === 'student' ? 'student-lin' : 'admin-zhou',
-          idempotencyKey: `${snapshot?.case.id}-${status}-${to}-${crypto.randomUUID()}`,
           metadata,
           revisedApplication:
             status === 'returned' && to === 'draft'
@@ -589,6 +618,20 @@ export function CampusDashboard() {
             ))}
           </nav>
           <div className="flex items-center gap-2">
+            <fieldset className="flex items-center rounded-full border border-border bg-white p-0.5" aria-label="操作身份">
+              {switchableRoleOptions.map((role) => (
+                <button
+                  key={role}
+                  type="button"
+                  aria-pressed={actorRole === role}
+                  disabled={busy !== null}
+                  onClick={() => switchRole(role)}
+                  className={`rounded-full px-3 py-1 text-xs transition-colors disabled:opacity-50 ${actorRole === role ? 'bg-teal-700 font-medium text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  {roleLabels[role]}
+                </button>
+              ))}
+            </fieldset>
             <Badge variant="outline" className="hidden border-emerald-200 bg-emerald-50 text-emerald-700 sm:inline-flex"><span className="size-1.5 rounded-full bg-emerald-500" />模拟数据</Badge>
             <Button variant="outline" size="sm" onClick={resetDemo} disabled={busy !== null}>
               <RefreshCcw className={busy === 'reset' ? 'animate-spin' : ''} />重置演示
@@ -615,7 +658,7 @@ export function CampusDashboard() {
           </div>
 
           <Card className="border-0 bg-[#f5f3ec] shadow-none ring-1 ring-[#ded9ca]">
-            <CardHeader><CardTitle className="flex items-center gap-2 text-slate-800"><Clock3 className="size-4 text-teal-700" />当前办理进度</CardTitle><CardDescription>{snapshot.case.id} · {statusMeta[status].label}</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-slate-800"><Clock3 className="size-4 text-teal-700" />当前办理进度</CardTitle><CardDescription>{snapshot.case.id} · {statusMeta[status].label} · 当前身份 {roleLabels[actorRole]}</CardDescription></CardHeader>
             <CardContent>
               <Progress value={meta.progress}><ProgressLabel>已完成 {meta.step + 1} / 4</ProgressLabel><ProgressValue>{() => `${meta.progress}%`}</ProgressValue></Progress>
               <ol className="mt-6 grid grid-cols-4 gap-2">
@@ -669,14 +712,14 @@ export function CampusDashboard() {
 
                 <Separator />
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground"><FileCheck2 className="size-4 text-teal-700" />{editable ? '可编辑草稿；提交前必须通过规则预检' : `表单已锁定于 ${statusMeta[status].label} 状态`}</div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground"><FileCheck2 className="size-4 text-teal-700" />{editable ? '可编辑草稿；提交前必须通过规则预检' : status === 'draft' ? '草稿只能由申请人本人编辑' : `表单已锁定于 ${statusMeta[status].label} 状态`}</div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {editable && <><Button variant="outline" onClick={saveDraft} disabled={busy !== null}>{busy === 'save' && <LoaderCircle className="animate-spin" />}保存草稿</Button><Button variant="outline" onClick={validate} disabled={busy !== null}>{busy === 'validate' && <LoaderCircle className="animate-spin" />}规则预检</Button><Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('submitted', 'student')} disabled={busy !== null}><Send />提交申请</Button></>}
-                    {status === 'submitted' && <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('under_review', 'admin')} disabled={busy !== null}><UserRoundCog />管理员接件</Button>}
-                    {status === 'under_review' && <><Button variant="outline" onClick={() => runAgent('review')} disabled={busy !== null}><ClipboardCheck />生成审核摘要</Button><Button variant="outline" onClick={() => transition('returned', 'admin', { reason: '请根据人工审核意见修改后重提' })} disabled={busy !== null}>退回修改</Button><Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('approved', 'admin')} disabled={busy !== null}>人工批准</Button></>}
-                    {status === 'returned' && <><Button variant="outline" onClick={() => runAgent('return')} disabled={busy !== null}><MessageSquareText />生成退回通知</Button><Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('draft', 'student')} disabled={busy !== null}>创建修订 V{snapshot.case.currentVersion + 1}</Button></>}
-                    {status === 'approved' && <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('completed', 'admin')} disabled={busy !== null}><FileCheck2 />办结归档</Button>}
-                    {status === 'completed' && <Badge className="bg-emerald-700"><CheckCircle2 />流程已完整闭环</Badge>}
+                    {editable && <><Button variant="outline" onClick={saveDraft} disabled={busy !== null}>{busy === 'save' && <LoaderCircle className="animate-spin" />}保存草稿</Button><Button variant="outline" onClick={validate} disabled={busy !== null}>{busy === 'validate' && <LoaderCircle className="animate-spin" />}规则预检</Button><Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('submitted')} disabled={busy !== null}><Send />提交申请</Button></>}
+                    {status === 'submitted' && isAdmin && <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('under_review')} disabled={busy !== null}><UserRoundCog />管理员接件</Button>}
+                    {status === 'under_review' && isAdmin && <><Button variant="outline" onClick={() => runAgent('review')} disabled={busy !== null}><ClipboardCheck />生成审核摘要</Button><Button variant="outline" onClick={() => transition('returned', { reason: '请根据人工审核意见修改后重提' })} disabled={busy !== null}>退回修改</Button><Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('approved')} disabled={busy !== null}>人工批准</Button></>}
+                    {status === 'returned' && isAdmin && <Button variant="outline" onClick={() => runAgent('return')} disabled={busy !== null}><MessageSquareText />生成退回通知</Button>}{status === 'returned' && isStudent && <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('draft')} disabled={busy !== null}>创建修订 V{snapshot.case.currentVersion + 1}</Button>}
+                    {status === 'approved' && isAdmin && <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => transition('completed')} disabled={busy !== null}><FileCheck2 />办结归档</Button>}
+                    {status === 'completed' && <Badge className="bg-emerald-700"><CheckCircle2 />流程已完整闭环</Badge>}{!hasRoleAction && <span className="text-xs text-muted-foreground">当前身份“{roleLabels[actorRole]}”在“{statusMeta[status].label}”阶段没有可执行的操作，请在右上角切换身份。</span>}
                   </div>
                 </div>
               </CardContent>

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { caseStatuses } from '@/lib/domain/types';
+import { readActor } from '@/lib/server/session';
 import { transitionCase, updateDraft } from '@/lib/server/store';
 
 const applicationSchema = z.object({
@@ -19,17 +21,7 @@ const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('save'), application: applicationSchema }),
   z.object({
     action: z.literal('transition'),
-    to: z.enum([
-      'draft',
-      'submitted',
-      'under_review',
-      'returned',
-      'approved',
-      'completed',
-    ]),
-    role: z.enum(['student', 'admin', 'system']),
-    actorId: z.string(),
-    idempotencyKey: z.string().min(8),
+    to: z.enum(caseStatuses),
     metadata: z.record(z.string(), z.unknown()).optional(),
     revisedApplication: applicationSchema.optional(),
   }),
@@ -43,11 +35,14 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  // The acting role comes from the session, never from the request body, so a
+  // caller cannot approve their own case by sending `role: "admin"`.
+  const actor = readActor(request);
   try {
     return Response.json(
       parsed.data.action === 'save'
-        ? await updateDraft(parsed.data.application)
-        : await transitionCase(parsed.data),
+        ? await updateDraft(parsed.data.application, actor)
+        : await transitionCase({ ...parsed.data, ...actor }),
     );
   } catch (error) {
     return Response.json(
@@ -56,4 +51,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

@@ -138,7 +138,10 @@ export async function getDemoSnapshot() {
   };
 }
 
-export async function updateDraft(application: VenueApplication) {
+export async function updateDraft(
+  application: VenueApplication,
+  actor: { role: ActorRole; actorId: string },
+) {
   await ensureDemoSeeded();
   const db = getDb();
   const [caseRow] = await db
@@ -148,9 +151,12 @@ export async function updateDraft(application: VenueApplication) {
   if (caseRow.status !== 'draft') {
     throw new Error(`CASE_NOT_EDITABLE:${caseRow.status}`);
   }
+  if (actor.role !== 'student') {
+    throw new Error(`CASE_NOT_EDITABLE_BY:${actor.role}`);
+  }
   await db
     .update(caseVersions)
-    .set({ formData: application })
+    .set({ formData: application, createdBy: actor.actorId })
     .where(
       and(
         eq(caseVersions.caseId, DEMO_CASE_ID),
@@ -168,19 +174,27 @@ export async function transitionCase({
   to,
   role,
   actorId,
-  idempotencyKey,
   metadata = {},
   revisedApplication,
 }: {
   to: CaseStatus;
   role: ActorRole;
   actorId: string;
-  idempotencyKey: string;
   metadata?: Record<string, unknown>;
   revisedApplication?: VenueApplication;
 }) {
   await ensureDemoSeeded();
   const db = getDb();
+  const [caseRow] = await db
+    .select()
+    .from(cases)
+    .where(eq(cases.id, DEMO_CASE_ID));
+
+  // Derived server-side from the state the transition starts at, so a retried or
+  // double-clicked request carries the same key and collapses into one event.
+  // A client-supplied key with a random suffix — as this used to send — made the
+  // idempotency index decorative.
+  const idempotencyKey = `${DEMO_CASE_ID}-v${caseRow.currentVersion}-${caseRow.status}-to-${to}`;
   const [duplicate] = await db
     .select({ id: caseEvents.id })
     .from(caseEvents)
@@ -188,10 +202,6 @@ export async function transitionCase({
     .limit(1);
   if (duplicate) return getDemoSnapshot();
 
-  const [caseRow] = await db
-    .select()
-    .from(cases)
-    .where(eq(cases.id, DEMO_CASE_ID));
   assertTransition(caseRow.status, to, role);
 
   const timestamp = now();
