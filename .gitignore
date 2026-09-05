@@ -48,3 +48,6 @@ next-env.d.ts
 
 # typescript incremental build cache
 tsconfig.tsbuildinfo
+
+# office lock files left behind while a document is open
+~$*
