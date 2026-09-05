@@ -1488,82 +1488,11 @@ export function CampusDashboard() {
                 </CardContent>
               </Card>
             )}
-
-            {/* Audit timeline */}
-            <Card id="timeline" className="scroll-mt-24 shadow-card">
-              <CardHeader>
-                <CardTitle className="text-[16px]">不可变事务时间轴</CardTitle>
-                <CardDescription className="text-[13px]">
-                  每次状态变化带角色、前后状态和幂等键写入后端。
-                </CardDescription>
-                <CardAction>
-                  <Badge
-                    variant="secondary"
-                    className="py-1 text-[12px]"
-                    data-numeric
-                  >
-                    {snapshot.events.length} 条
-                  </Badge>
-                </CardAction>
-              </CardHeader>
-              <CardContent>
-                <ol className="relative space-y-0">
-                  {snapshot.events.map((event, index) => (
-                    <li
-                      key={event.id}
-                      className="relative grid grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-3.5 py-3"
-                    >
-                      <div className="relative grid size-8 place-items-center rounded-full bg-brand-50 text-brand-700 ring-1 ring-brand-200">
-                        {index === snapshot.events.length - 1 ? (
-                          <CheckCircle2 className="size-4" />
-                        ) : (
-                          <CircleDashed className="size-4" />
-                        )}
-                        {index < snapshot.events.length - 1 && (
-                          <span className="absolute left-1/2 top-8 h-[26px] w-px -translate-x-1/2 bg-border" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[14px] font-medium">
-                          {event.beforeState
-                            ? `${statusMeta[event.beforeState as CaseStatus]?.label ?? event.beforeState} → ${
-                                statusMeta[event.afterState as CaseStatus]
-                                  ?.label ?? event.afterState
-                              }`
-                            : '创建申请'}
-                        </p>
-                        <p className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[11.5px] font-medium ${
-                              event.actorRole === 'student'
-                                ? 'bg-brand-50 text-brand-800'
-                                : event.actorRole === 'admin'
-                                  ? 'bg-secondary text-secondary-foreground'
-                                  : 'bg-muted text-muted-foreground'
-                            }`}
-                          >
-                            {event.actorRole === 'student'
-                              ? '申请人'
-                              : event.actorRole === 'admin'
-                                ? '管理员'
-                                : '系统'}
-                          </span>
-                          <span className="font-mono text-[11.5px]">
-                            {event.eventType}
-                          </span>
-                        </p>
-                      </div>
-                      <time className="pt-0.5 text-[12px] text-muted-foreground">
-                        {formatDate(event.createdAt)}
-                      </time>
-                    </li>
-                  ))}
-                </ol>
-              </CardContent>
-            </Card>
           </div>
 
-          {/* AI console + reference panels */}
+          {/* AI console. Deliberately not sticky: the console column is the
+              taller of the two, so a sticky wrapper would have no travel to
+              hold within and would only risk overlapping the cards below it. */}
           <aside className="space-y-5">
             <Card className="bg-console gap-5 border-0 text-slate-50 shadow-panel ring-0">
               <CardHeader className="border-b border-white/10 pb-4">
@@ -1821,119 +1750,6 @@ export function CampusDashboard() {
               </CardContent>
             </Card>
 
-            <Card id="availability" className="scroll-mt-24 shadow-card">
-              <CardHeader>
-                <CardTitle className="text-[15px]">
-                  开放时间与已占用时段
-                </CardTitle>
-                <CardDescription className="text-[12.5px] leading-[1.7]">
-                  VENUE-HOUR-001 与 VENUE-SLOT-001
-                  判定所依据的事实，全部为模拟数据。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2.5">
-                {snapshot.venues.map((item) => {
-                  const taken = snapshot.bookings.filter(
-                    (booking) => booking.venueId === item.id,
-                  );
-                  const selected = item.id === application.venueId;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`rounded-xl border p-3.5 transition-colors ${
-                        selected
-                          ? 'border-brand-300 bg-brand-50'
-                          : 'border-border bg-card'
-                      }`}
-                    >
-                      <div className="flex items-baseline justify-between gap-3">
-                        <p className="text-[13.5px] font-semibold">
-                          {item.name}
-                        </p>
-                        <span className="shrink-0 font-mono text-[12px] text-muted-foreground">
-                          {item.availableFrom}–{item.availableTo}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[12.5px] text-muted-foreground">
-                        容量 {item.capacity} 人 · {item.equipment.join('、')}
-                      </p>
-                      {taken.length === 0 ? (
-                        <p className="mt-2 text-[12.5px] text-muted-foreground">
-                          暂无已占用时段
-                        </p>
-                      ) : (
-                        <ul className="mt-2 space-y-1">
-                          {taken.map((booking) => (
-                            <li
-                              key={booking.title}
-                              className="flex items-center gap-1.5 text-[12.5px] leading-[1.7] text-fail"
-                            >
-                              <span className="size-1.5 shrink-0 rounded-full bg-fail" />
-                              {formatSlot(booking.startTime, booking.endTime)} ·{' '}
-                              {booking.title}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-
-            <Card id="knowledge" className="scroll-mt-24 shadow-card">
-              <CardHeader>
-                <CardTitle className="text-[15px]">场地事务知识库</CardTitle>
-                <CardDescription className="text-[12.5px] leading-[1.7]">
-                  每条规则都绑定制度依据；AI 只能读取当前任务命中的条目。
-                </CardDescription>
-                <CardAction>
-                  <Badge
-                    variant="secondary"
-                    className="py-1 text-[12px]"
-                    data-numeric
-                  >
-                    {snapshot.knowledge.length} 篇
-                  </Badge>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="space-y-2.5">
-                {snapshot.knowledge.map((document) => {
-                  const cited =
-                    aiPresentation?.result.knowledge.some(
-                      (item) => item.id === document.id,
-                    ) ?? false;
-                  return (
-                    <div
-                      key={document.id}
-                      className={`rounded-xl border p-3.5 transition-colors ${
-                        cited
-                          ? 'border-brand-300 bg-brand-50'
-                          : 'border-border bg-card'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="text-[13.5px] font-semibold">
-                          {document.title}
-                        </p>
-                        {cited && (
-                          <Badge className="shrink-0 bg-brand-600 text-[11.5px]">
-                            本次已引用
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="mt-1.5 text-[12.5px] leading-[1.75] text-muted-foreground">
-                        {document.content}
-                      </p>
-                      <p className="mt-2 font-mono text-[11.5px] text-muted-foreground/80">
-                        {document.id} · {document.source}
-                      </p>
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-
             <Card id="evidence" className="scroll-mt-24 shadow-card">
               <CardHeader>
                 <CardTitle className="text-[15px]">最近 AI 运行证据</CardTitle>
@@ -2020,6 +1836,192 @@ export function CampusDashboard() {
               </CardContent>
             </Card>
           </aside>
+        </section>
+
+        {/* Reference panels. They sit below the working area rather than
+            stacked in the aside, where they left the left column short by
+            roughly a screen height. */}
+        <section className="mt-5 grid items-start gap-5 lg:grid-cols-3">
+          <Card id="timeline" className="scroll-mt-24 shadow-card">
+            <CardHeader>
+              <CardTitle className="text-[16px]">不可变事务时间轴</CardTitle>
+              <CardDescription className="text-[13px]">
+                每次状态变化带角色、前后状态和幂等键写入后端。
+              </CardDescription>
+              <CardAction>
+                <Badge
+                  variant="secondary"
+                  className="py-1 text-[12px]"
+                  data-numeric
+                >
+                  {snapshot.events.length} 条
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardContent>
+              <ol className="relative space-y-0">
+                {snapshot.events.map((event, index) => (
+                  <li
+                    key={event.id}
+                    className="relative grid grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-3.5 py-3"
+                  >
+                    <div className="relative grid size-8 place-items-center rounded-full bg-brand-50 text-brand-700 ring-1 ring-brand-200">
+                      {index === snapshot.events.length - 1 ? (
+                        <CheckCircle2 className="size-4" />
+                      ) : (
+                        <CircleDashed className="size-4" />
+                      )}
+                      {index < snapshot.events.length - 1 && (
+                        <span className="absolute left-1/2 top-8 h-[26px] w-px -translate-x-1/2 bg-border" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[14px] font-medium">
+                        {event.beforeState
+                          ? `${statusMeta[event.beforeState as CaseStatus]?.label ?? event.beforeState} → ${
+                              statusMeta[event.afterState as CaseStatus]
+                                ?.label ?? event.afterState
+                            }`
+                          : '创建申请'}
+                      </p>
+                      <p className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[11.5px] font-medium ${
+                            event.actorRole === 'student'
+                              ? 'bg-brand-50 text-brand-800'
+                              : event.actorRole === 'admin'
+                                ? 'bg-secondary text-secondary-foreground'
+                                : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {event.actorRole === 'student'
+                            ? '申请人'
+                            : event.actorRole === 'admin'
+                              ? '管理员'
+                              : '系统'}
+                        </span>
+                        <span className="font-mono text-[11.5px]">
+                          {event.eventType}
+                        </span>
+                      </p>
+                    </div>
+                    <time className="pt-0.5 text-[12px] text-muted-foreground">
+                      {formatDate(event.createdAt)}
+                    </time>
+                  </li>
+                ))}
+              </ol>
+            </CardContent>
+          </Card>
+          <Card id="availability" className="scroll-mt-24 shadow-card">
+            <CardHeader>
+              <CardTitle className="text-[15px]">
+                开放时间与已占用时段
+              </CardTitle>
+              <CardDescription className="text-[12.5px] leading-[1.7]">
+                VENUE-HOUR-001 与 VENUE-SLOT-001
+                判定所依据的事实，全部为模拟数据。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              {snapshot.venues.map((item) => {
+                const taken = snapshot.bookings.filter(
+                  (booking) => booking.venueId === item.id,
+                );
+                const selected = item.id === application.venueId;
+                return (
+                  <div
+                    key={item.id}
+                    className={`rounded-xl border p-3.5 transition-colors ${
+                      selected
+                        ? 'border-brand-300 bg-brand-50'
+                        : 'border-border bg-card'
+                    }`}
+                  >
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-[13.5px] font-semibold">{item.name}</p>
+                      <span className="shrink-0 font-mono text-[12px] text-muted-foreground">
+                        {item.availableFrom}–{item.availableTo}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[12.5px] text-muted-foreground">
+                      容量 {item.capacity} 人 · {item.equipment.join('、')}
+                    </p>
+                    {taken.length === 0 ? (
+                      <p className="mt-2 text-[12.5px] text-muted-foreground">
+                        暂无已占用时段
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-1">
+                        {taken.map((booking) => (
+                          <li
+                            key={booking.title}
+                            className="flex items-center gap-1.5 text-[12.5px] leading-[1.7] text-fail"
+                          >
+                            <span className="size-1.5 shrink-0 rounded-full bg-fail" />
+                            {formatSlot(booking.startTime, booking.endTime)} ·{' '}
+                            {booking.title}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+          <Card id="knowledge" className="scroll-mt-24 shadow-card">
+            <CardHeader>
+              <CardTitle className="text-[15px]">场地事务知识库</CardTitle>
+              <CardDescription className="text-[12.5px] leading-[1.7]">
+                每条规则都绑定制度依据；AI 只能读取当前任务命中的条目。
+              </CardDescription>
+              <CardAction>
+                <Badge
+                  variant="secondary"
+                  className="py-1 text-[12px]"
+                  data-numeric
+                >
+                  {snapshot.knowledge.length} 篇
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              {snapshot.knowledge.map((document) => {
+                const cited =
+                  aiPresentation?.result.knowledge.some(
+                    (item) => item.id === document.id,
+                  ) ?? false;
+                return (
+                  <div
+                    key={document.id}
+                    className={`rounded-xl border p-3.5 transition-colors ${
+                      cited
+                        ? 'border-brand-300 bg-brand-50'
+                        : 'border-border bg-card'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-[13.5px] font-semibold">
+                        {document.title}
+                      </p>
+                      {cited && (
+                        <Badge className="shrink-0 bg-brand-600 text-[11.5px]">
+                          本次已引用
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1.5 text-[12.5px] leading-[1.75] text-muted-foreground">
+                      {document.content}
+                    </p>
+                    <p className="mt-2 font-mono text-[11.5px] text-muted-foreground/80">
+                      {document.id} · {document.source}
+                    </p>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
         </section>
       </div>
     </main>
