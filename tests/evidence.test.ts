@@ -65,6 +65,10 @@ describe('evidence allowlists', () => {
     expect(validRuleIds.has('VENUE-RULE-999')).toBe(false);
   });
 
+  it('allows the administrator return reason to be cited', () => {
+    expect(validEvidenceRefs.has('CASE:returnReason')).toBe(true);
+  });
+
   it('allows every seeded knowledge document to be cited', () => {
     for (const document of demoKnowledge) {
       expect(validEvidenceRefs.has(document.id)).toBe(true);

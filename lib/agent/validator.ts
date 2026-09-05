@@ -4,7 +4,9 @@ export type AgentValidationErrorCode =
   | 'INVALID_JSON'
   | 'SCHEMA_MISMATCH'
   | 'RULE_NOT_FOUND'
-  | 'EVIDENCE_NOT_FOUND';
+  | 'EVIDENCE_NOT_FOUND'
+  /** Well-formed output that contradicts the case's actual state. */
+  | 'SEMANTIC_CONFLICT';
 
 export class AgentValidationError extends Error {
   constructor(

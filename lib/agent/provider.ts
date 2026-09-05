@@ -7,6 +7,7 @@ import { validEvidenceRefs, validRuleIds } from './evidence';
 import { applyResponseFault, faultTimeoutBudget } from './faults';
 import { selectKnowledgeIds, type KnowledgeSnippet } from './knowledge';
 import { MAX_ATTEMPTS, shouldRepair } from './retry';
+import { assertReturnNoticeSemantics } from './semantics';
 import {
   formAssistSchema,
   reviewBriefSchema,
@@ -164,6 +165,8 @@ async function runAgentTask<T>({
   faultMode,
   caseId,
   ruleIssues,
+  postValidate,
+  fallbackOverride,
 }: {
   taskType: AgentTaskType;
   promptVersion: string;
@@ -174,6 +177,9 @@ async function runAgentTask<T>({
   faultMode: FaultMode;
   caseId: string;
   ruleIssues: RuleIssue[];
+  /** Runs after schema/rule/evidence checks; throw to reject the output. */
+  postValidate?: (output: T) => void;
+  fallbackOverride?: string;
 }): Promise<AgentRunResult<T>> {
   const runtime = env as RuntimeEnv;
   const mode = runtime.LLM_MODE === 'live' ? 'live' : 'mock';
@@ -227,12 +233,14 @@ async function runAgentTask<T>({
             })
           : await mockResponse(buildMockOutput(knowledge), timeoutMs, faultMode);
       rawResponse = applyResponseFault(modelResponse, taskType, faultMode);
-      parsedOutput = validateAgentOutput({
+      const candidate = validateAgentOutput({
         raw: rawResponse,
         schema,
         validRuleIds,
         validEvidenceRefs,
       });
+      postValidate?.(candidate);
+      parsedOutput = candidate;
     } catch (error) {
       errorCode =
         error instanceof AgentValidationError
@@ -282,7 +290,7 @@ async function runAgentTask<T>({
   return {
     ok: false,
     errorCode: lastErrorCode,
-    fallback: fallbackMessages[taskType],
+    fallback: fallbackOverride ?? fallbackMessages[taskType],
     latencyMs: lastLatencyMs,
     model,
     mode,
@@ -372,22 +380,37 @@ export async function runReviewBrief(
   });
 }
 
+export type ReturnContext = {
+  status: string;
+  returnReason: string | null;
+};
+
 export async function runReturnMessageDraft(
   caseId: string,
   application: VenueApplication,
   validation: ValidationResult,
+  returnContext: ReturnContext,
   faultMode: FaultMode = 'none',
 ) {
   const failed = validation.results.filter((item) => !item.passed);
+  const reason = returnContext.returnReason;
+  // The applicant's instruction is the reviewer's own words. If the model is
+  // rejected the fallback still carries them, so the notice is never empty of
+  // the one thing the applicant actually needs.
+  const fallbackOverride = reason
+    ? `AI 草稿未通过校验，已安全丢弃。管理员填写的退回意见为：“${reason}”。请据此修改后创建修订版本重新提交。`
+    : undefined;
   const buildMockOutput = (knowledge: KnowledgeSnippet[]) =>
     ({
       taskType: 'return_message_draft',
-      message: failed.length
-        ? `你提交的“${application.activityName}”暂需修改。请按下列事项补充后重新提交，原申请记录将保留。`
-        : `你提交的“${application.activityName}”需要补充人工审核意见后重新提交，原申请记录将保留。`,
-      requiredActions: failed.length
-        ? failed.map((item) => `${item.ruleId}：${item.message}`)
-        : ['请补充管理员在人工审核中说明的材料。'],
+      message: `你提交的“${application.activityName}”已被退回，需要修改后重新提交。原申请版本将保留。`,
+      requiredActions: [
+        ...(reason ? [`管理员退回意见：${reason}`] : []),
+        ...failed.map((item) => `${item.ruleId}：${item.message}`),
+        ...(reason || failed.length
+          ? []
+          : ['请补充管理员在人工审核中说明的材料。']),
+      ],
       evidenceRefs: [
         ...new Set([
           ...failed.flatMap((item) => item.evidenceRefs),
@@ -399,10 +422,22 @@ export async function runReturnMessageDraft(
 
   return runAgentTask<ReturnMessageOutput>({
     taskType: 'return_message_draft',
-    promptVersion: 'return-message-1.1',
+    promptVersion: 'return-message-1.2',
     schema: returnMessageSchema,
     buildMockOutput,
-    verifiedContext: { application, validation },
+    // The case state and the reviewer's own words are verified context. Given
+    // only a valid form, the model drafted "已提交，等待审批" for a case that had
+    // been sent back; it had no way to know otherwise.
+    verifiedContext: {
+      application,
+      validation,
+      caseStatus: returnContext.status,
+      // Keyed by its evidence id so a citation lands on the allowlisted token
+      // rather than on whatever this field happens to be called.
+      'CASE:returnReason': reason,
+      instruction:
+        '这封通知写给申请人，用途是要求其修改后重新提交。不得表示申请已提交、正在审批、已获批准或无需修改。evidenceRefs 只能引用 CASE:returnReason、规则编号或 knowledge 中的条目编号。',
+    },
     knowledgeIds: selectKnowledgeIds({
       taskType: 'return_message_draft',
       application,
@@ -411,5 +446,8 @@ export async function runReturnMessageDraft(
     faultMode,
     caseId,
     ruleIssues: failingRules(validation),
+    postValidate: (output) =>
+      assertReturnNoticeSemantics(output, { status: returnContext.status }),
+    fallbackOverride,
   });
 }

@@ -7,8 +7,15 @@ import type { FaultMode } from './types';
  */
 export const MAX_ATTEMPTS = 2;
 
-/** Only shape problems are worth re-asking for. A timeout or HTTP error is not. */
-const REPAIRABLE_ERROR_CODES = new Set(['INVALID_JSON', 'SCHEMA_MISMATCH']);
+/**
+ * Shape problems and state contradictions are worth re-asking for, because the
+ * model gets the complaint back and can correct. A timeout or HTTP error is not.
+ */
+const REPAIRABLE_ERROR_CODES = new Set([
+  'INVALID_JSON',
+  'SCHEMA_MISMATCH',
+  'SEMANTIC_CONFLICT',
+]);
 
 export function shouldRepair({
   mode,

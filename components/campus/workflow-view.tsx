@@ -27,7 +27,7 @@ import type {
   Venue,
   VenueApplication,
 } from './types';
-import { statusMeta, workflowSteps } from './types';
+import { latestReturnReason, statusMeta, workflowSteps } from './types';
 
 const equipmentOptions = [
   '投影',
@@ -142,6 +142,8 @@ export function WorkflowView({
   isStudent,
   isAdmin,
   busy,
+  returnReason,
+  onReturnReasonChange,
   onFieldChange,
   onSaveDraft,
   onValidate,
@@ -156,6 +158,8 @@ export function WorkflowView({
   isStudent: boolean;
   isAdmin: boolean;
   busy: string | null;
+  returnReason: string;
+  onReturnReasonChange: (value: string) => void;
   onFieldChange: <K extends keyof VenueApplication>(
     field: K,
     value: VenueApplication[K],
@@ -167,6 +171,7 @@ export function WorkflowView({
 }) {
   const status = snapshot.case.status;
   const meta = statusMeta[status];
+  const savedReturnReason = latestReturnReason(snapshot.events);
   const passedCount =
     validation?.results.filter((item) => item.passed).length ?? 0;
 
@@ -185,6 +190,21 @@ export function WorkflowView({
       <Panel className="px-5 py-4">
         <Stepper step={meta.step} />
       </Panel>
+
+      {status === 'returned' && savedReturnReason && (
+        <div className="rounded-2xl border border-warn-line bg-warn-soft px-5 py-4">
+          <p className="flex items-center gap-2 text-[13.5px] font-semibold text-warn">
+            <MessageSquareText className="size-4 shrink-0" aria-hidden="true" />
+            管理员退回意见
+          </p>
+          <p className="mt-2 text-[13.5px] leading-[1.75] text-foreground">
+            {savedReturnReason}
+          </p>
+          <p className="mt-2 text-[11.5px] text-muted-foreground">
+            这条意见由管理员本人填写并写入退回事件，AI 起草的通知也只能引用它。
+          </p>
+        </div>
+      )}
 
       <Panel
         title="场地使用申请"
@@ -382,6 +402,32 @@ export function WorkflowView({
             </p>
           </div>
 
+          {status === 'under_review' && isAdmin && (
+            <div className="space-y-2 rounded-xl border border-border bg-muted/40 p-4">
+              <label
+                htmlFor="return-reason"
+                className="text-[13px] font-medium"
+              >
+                退回意见
+                <span className="ml-1.5 text-[11.5px] font-normal text-muted-foreground">
+                  退回前必填，会写入退回事件并展示给申请人
+                </span>
+              </label>
+              <Textarea
+                id="return-reason"
+                className="min-h-20 resize-none bg-card text-[13.5px] leading-[1.75]"
+                placeholder="例如：预计人数接近场地容量上限，请补充现场秩序维护与疏散安排。"
+                value={returnReason}
+                onChange={(event) => onReturnReasonChange(event.target.value)}
+              />
+              {returnReason.trim().length === 0 && (
+                <p className="text-[11.5px] text-muted-foreground">
+                  未填写退回意见时“退回修改”不可用；批准和生成摘要不受影响。
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-col gap-3 border-t border-border/70 pt-4 lg:flex-row lg:items-center lg:justify-between">
             <p className="flex items-center gap-2 text-[12px] text-muted-foreground">
               <FileCheck2 className="size-4 text-brand-600" aria-hidden="true" />
@@ -447,11 +493,9 @@ export function WorkflowView({
                   <Button
                     variant="outline"
                     onClick={() =>
-                      onTransition('returned', {
-                        reason: '请根据人工审核意见修改后重提',
-                      })
+                      onTransition('returned', { reason: returnReason.trim() })
                     }
-                    disabled={busy !== null}
+                    disabled={busy !== null || returnReason.trim().length === 0}
                   >
                     退回修改
                   </Button>

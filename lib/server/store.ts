@@ -28,6 +28,12 @@ import type {
 
 const now = () => new Date().toISOString();
 
+/** Event metadata is untyped JSON, so read the reason without stringifying an object. */
+function readReason(metadata: Record<string, unknown> | null | undefined) {
+  const value = metadata?.reason;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 const initialApplication: VenueApplication = {
   activityName: '2026 秋季社团招新宣讲会',
   organization: '学生创新协会',
@@ -265,6 +271,11 @@ export async function transitionCase({
   });
   const opensNewVersion = nextVersion !== caseRow.currentVersion;
   if (opensNewVersion && !revisedApplication) throw new Error('REVISION_REQUIRED');
+  // A return is an instruction to the applicant, so it has to say what to change.
+  // Without this the reason was a fixed string nobody wrote and nobody could read.
+  if (to === 'returned' && !readReason(metadata)) {
+    throw new Error('RETURN_REASON_REQUIRED');
+  }
 
   const statements: [typeof updateCase, ...unknown[]] = [updateCase, insertEvent];
   if (opensNewVersion) {
@@ -312,6 +323,36 @@ export async function resetDemo(caseId: string) {
 export async function recordAiRun(run: typeof aiRuns.$inferInsert) {
   const db = getDb();
   await db.insert(aiRuns).values(run);
+}
+
+/**
+ * Status plus the most recent human return reason. The return-notice task needs
+ * both: given only a valid form it once drafted "已提交，等待审批" for a case that
+ * had in fact been sent back.
+ */
+export async function getReturnContext(caseId: string): Promise<{
+  status: CaseStatus;
+  returnReason: string | null;
+  returnedAt: string | null;
+}> {
+  await ensureDemoSeeded(caseId);
+  const db = getDb();
+  const [caseRow] = await db
+    .select({ status: cases.status })
+    .from(cases)
+    .where(eq(cases.id, caseId));
+  const [latestReturn] = await db
+    .select({ metadata: caseEvents.metadata, createdAt: caseEvents.createdAt })
+    .from(caseEvents)
+    .where(and(eq(caseEvents.caseId, caseId), eq(caseEvents.afterState, 'returned')))
+    .orderBy(desc(caseEvents.createdAt))
+    .limit(1);
+  const reason = readReason(latestReturn?.metadata);
+  return {
+    status: caseRow.status,
+    returnReason: reason.length > 0 ? reason : null,
+    returnedAt: latestReturn?.createdAt ?? null,
+  };
 }
 
 /** Loads the knowledge documents an agent task is allowed to read, in catalog order. */

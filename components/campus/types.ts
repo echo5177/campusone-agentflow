@@ -24,6 +24,7 @@ export type DemoSnapshot = {
     version: number;
     createdBy: string;
     createdAt: string;
+    formData: VenueApplication;
   }>;
   events: Array<{
     id: string;
@@ -32,6 +33,7 @@ export type DemoSnapshot = {
     actorId: string;
     beforeState: string | null;
     afterState: string;
+    metadata: Record<string, unknown>;
     createdAt: string;
   }>;
   aiRuns: Array<{
@@ -118,6 +120,36 @@ export const statusMeta: Record<
 };
 
 export const workflowSteps = ['填写申请', '规则预检', '人工审核', '结果归档'];
+
+/** Fields shown when comparing two application versions, in form order. */
+export const comparableFields: Array<{
+  key: keyof VenueApplication;
+  label: string;
+}> = [
+  { key: 'activityName', label: '活动名称' },
+  { key: 'organization', label: '申请组织' },
+  { key: 'venueId', label: '候选场地' },
+  { key: 'attendees', label: '预计人数' },
+  { key: 'startTime', label: '开始时间' },
+  { key: 'endTime', label: '结束时间' },
+  { key: 'contactName', label: '现场负责人' },
+  { key: 'contactPhone', label: '联系电话' },
+  { key: 'equipment', label: '设备需求' },
+  { key: 'description', label: '活动说明' },
+];
+
+/** Reads the most recent administrator return reason out of the event log. */
+export function latestReturnReason(
+  events: Array<{ afterState: string; metadata: Record<string, unknown> }>,
+): string | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.afterState !== 'returned') continue;
+    const reason = event.metadata?.reason;
+    if (typeof reason === 'string' && reason.trim()) return reason.trim();
+  }
+  return null;
+}
 
 export const agentTaskLabels: Record<string, string> = {
   form_assist: '表单整理',

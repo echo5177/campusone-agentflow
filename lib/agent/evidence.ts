@@ -12,6 +12,9 @@ export const validRuleIds = new Set<string>(ruleCatalog.map((rule) => rule.id));
 
 export const validEvidenceRefs = new Set<string>([
   'FORM-SCHEMA-1.2',
+  // The administrator's own return reason is a real, checkable source, so a
+  // notice written from it should be able to cite it.
+  'CASE:returnReason',
   // A rule id is a real, checkable identifier, so citing one is a good citation.
   // Leaving them off the list rejected correct answers: once the assistant was
   // given the deterministic verdict it naturally cited VENUE-CAP-001 as its

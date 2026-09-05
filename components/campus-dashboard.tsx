@@ -90,6 +90,7 @@ export function CampusDashboard() {
   const [notice, setNotice] = useState<Notice>(null);
   const [view, setView] = useState<DashboardView>('workflow');
   const [actorRole, setActorRole] = useState<SwitchableRole>('student');
+  const [returnReason, setReturnReason] = useState('');
   const applicationRef = useRef(application);
 
   useEffect(() => {
@@ -444,9 +445,15 @@ export function CampusDashboard() {
       });
       applySnapshot(next);
       setValidation(null);
+      // The reason belongs to the return that was just recorded; keeping it in
+      // the box would let the next review reuse wording nobody wrote for it.
+      if (to === 'returned') setReturnReason('');
       setNotice({
         tone: 'success',
-        text: `状态已更新为“${statusMeta[to].label}”，事件已写入审计时间轴。`,
+        text:
+          to === 'returned'
+            ? '已退回，退回意见已写入事件并对申请人可见。'
+            : `状态已更新为“${statusMeta[to].label}”，事件已写入审计时间轴。`,
       });
     });
   };
@@ -459,7 +466,16 @@ export function CampusDashboard() {
       applySnapshot(next);
       setValidation(null);
       setAiPresentation(null);
-      setNotice({ tone: 'success', text: '演示数据已恢复到初始草稿。' });
+      // Reset is the "start recording again" button, so it also puts identity,
+      // fault mode and the open view back where a take begins.
+      setActorRole('student');
+      setFaultMode('none');
+      setReturnReason('');
+      openView('workflow');
+      setNotice({
+        tone: 'success',
+        text: '演示数据已恢复：草稿 V1、申请人身份、正常输出。',
+      });
     });
   };
 
@@ -638,6 +654,8 @@ export function CampusDashboard() {
           {view === 'workflow' && (
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
               <WorkflowView
+                returnReason={returnReason}
+                onReturnReasonChange={setReturnReason}
                 snapshot={snapshot}
                 application={application}
                 validation={validation}
