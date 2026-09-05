@@ -4,7 +4,8 @@ CampusOne 是一款面向高校场地申请的可信事务智能体。它把固�
 
 - 私有演示站点：<https://campusone-agentflow.atticus-5951.chatgpt.site>
 - 比赛交付物：`deliverables/`
-- 单一身份配置：`competition.config.json`（补齐单位、成员、教师和邮箱后重建材料）
+- 单一身份配置：`competition.config.json`（厦门大学；胡博（队长）、温广琛、许佳锋；指导教师张盈谦；邮箱待补）
+- 长期约定：`docs/project-context.md`（团队身份、初赛材料定位与 PPT 审美偏好）
 
 ## 产品原则
 
@@ -64,11 +65,11 @@ npm run build
 
 ## 比赛材料
 
-`deliverables/` 已包含不超过 2000 字的项目概要、14 页项目简介 PPT、完整设计方案书、真人视频逐秒脚本与录制指南。
+`deliverables/` 包含项目概要、项目简介 PPT、设计方案书、视频脚本与录制指南。当前项目简介为 `CampusOne_项目简介_v3.pptx`，共 16 页，供评委独立阅读；此前含“路演答辩”的文件保留为历史版本。
 
-> **注意**：`deliverables/` 中的 Word、PPT 与截图生成于本轮代码修复之前，尚未包含开放时间规则、知识库检索、服务端身份与会话隔离。提交前需按下方命令重建并复核。
+> 现有 Word 交付物仍需按当前代码和团队配置重建并复核。项目简介 v3 已纳入当前六项规则、知识来源、权限与会话设计；其中产品图片沿用工作区既有截图。
 
-提交前仍需在 `competition.config.json` 补齐真实身份信息，并由参赛者录制 3–5 分钟实机演示视频。
+联系邮箱仍需在 `competition.config.json` 补齐。参赛者另行录制 3–5 分钟实机演示视频，PPT 可仅选用一两页，也可以不使用。已确认的学校、队员和指导教师不必再次提供。
 
 身份信息更新后，在已创建的 Conda 环境中运行下列命令可重建两份 Word 文档：
 
@@ -76,4 +77,4 @@ npm run build
 conda run -n campusone-agentflow python work/documents/build_docs.py
 ```
 
-PPT 源文件为 `work/slides/build_deck.mjs`，依赖 Codex 工作区内置的演示文稿运行库；在当前工作区可由 Codex 重建并重新做视觉检查。
+当前 PPT 源文件为 `work/slides/v3/build_v3.mjs`，直接读取团队配置，依赖 Codex 工作区内置的演示文稿运行库；在当前工作区可由 Codex 重建并重新做视觉检查。`work/slides/build_deck.mjs` 与 `work/slides/v2/` 对应旧版。

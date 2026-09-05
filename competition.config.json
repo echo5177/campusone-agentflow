@@ -1,9 +1,10 @@
 {
   "projectName": "CampusOne",
   "competitionTrack": "教育管理应用创新赛",
-  "unit": "[待填写参赛单位]",
-  "teamMembers": ["[待填写队长]", "[待填写成员]"],
-  "advisor": "[待填写指导教师]",
+  "unit": "厦门大学",
+  "teamCaptain": "胡博",
+  "teamMembers": ["胡博", "温广琛", "许佳锋"],
+  "advisor": "张盈谦",
   "contactEmail": "[待填写联系邮箱]",
   "repositoryUrl": "https://github.com/echo5177/campusone-agentflow",
   "demoUrl": "https://campusone-agentflow.atticus-5951.chatgpt.site",
