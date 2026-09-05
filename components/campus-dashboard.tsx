@@ -126,14 +126,24 @@ export function CampusDashboard() {
     });
   }, []);
 
-  const reload = useCallback(async () => {
-    const [next, actor] = await Promise.all([
-      fetchJson<DemoSnapshot>('/api/demo'),
-      fetchJson<{ role: SwitchableRole }>('/api/demo/role'),
-    ]);
-    applySnapshot(next);
-    setActorRole(actor.role);
-  }, [applySnapshot]);
+  /**
+   * `keepForm` refreshes the snapshot without adopting the server's copy of the
+   * application. An AI run reloads only to pick up the new run record, and
+   * overwriting the form there threw away whatever the applicant had just typed
+   * but not yet saved — type 800, ask for help, watch the field snap back to 80.
+   */
+  const reload = useCallback(
+    async (options?: { keepForm?: boolean }) => {
+      const [next, actor] = await Promise.all([
+        fetchJson<DemoSnapshot>('/api/demo'),
+        fetchJson<{ role: SwitchableRole }>('/api/demo/role'),
+      ]);
+      if (options?.keepForm) setSnapshot(next);
+      else applySnapshot(next);
+      setActorRole(actor.role);
+    },
+    [applySnapshot],
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -249,7 +259,7 @@ export function CampusDashboard() {
             },
           );
           setAiPresentation({ kind: 'form', result });
-          await reload();
+          await reload({ keepForm: true });
           return result.ok
             ? {
                 ok: true,
@@ -380,12 +390,17 @@ export function CampusDashboard() {
         }),
       });
       setAiPresentation({ kind, result } as AiPresentation);
-      await reload();
+      await reload({ keepForm: true });
+      // "已通过校验" refers to the model's output, not the application. Saying
+      // only that above a failing rule check would read as an all-clear.
+      const blocked = result.ok && result.ruleIssues.length > 0;
       setNotice({
-        tone: result.ok ? 'success' : 'error',
-        text: result.ok
-          ? 'AI 输出已通过结构、规则和证据校验，等待人工确认。'
-          : result.fallback,
+        tone: result.ok && !blocked ? 'success' : 'error',
+        text: !result.ok
+          ? result.fallback
+          : blocked
+            ? `AI 输出已通过结构与证据校验；但规则预检有 ${result.ruleIssues.length} 项未通过，需先修正才能提交。`
+            : 'AI 输出已通过结构、规则和证据校验，等待人工确认。',
       });
     });
   };

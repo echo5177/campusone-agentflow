@@ -62,6 +62,9 @@ export type DemoSnapshot = {
 
 export type CitedKnowledge = { id: string; title: string; source: string };
 
+/** Rules that failed at the moment of an AI run, echoed back with the result. */
+export type RuleIssue = { ruleId: string; label: string; message: string };
+
 export type AgentResult<T> =
   | {
       ok: true;
@@ -70,6 +73,7 @@ export type AgentResult<T> =
       model: string;
       mode: 'mock' | 'live';
       knowledge: CitedKnowledge[];
+      ruleIssues: RuleIssue[];
     }
   | {
       ok: false;
@@ -79,6 +83,7 @@ export type AgentResult<T> =
       model: string;
       mode: 'mock' | 'live';
       knowledge: CitedKnowledge[];
+      ruleIssues: RuleIssue[];
     };
 
 export type AiPresentation =

@@ -18,6 +18,7 @@ import { formatDateTime } from './primitives';
 import type {
   AiPresentation,
   CitedKnowledge,
+  RuleIssue,
   DemoSnapshot,
   FaultMode,
   ValidationState,
@@ -47,6 +48,34 @@ function KnowledgeTrail({ knowledge }: { knowledge: CitedKnowledge[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * The rule engine's verdict, shown above the model's prose. Compliance is never
+ * the assistant's to assert: it once claimed an 800-person booking "符合场地申请
+ * 要求" because it was handed the form without the deterministic result.
+ */
+function RuleVerdictBand({ issues }: { issues: RuleIssue[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <div className="mb-3 rounded-xl border border-fail/30 bg-fail/12 p-3.5">
+      <p className="flex items-center gap-2 text-[12.5px] font-medium text-rose-100">
+        <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+        规则预检未通过 · {issues.length} 项
+      </p>
+      <ul className="mt-2 space-y-1.5">
+        {issues.map((issue) => (
+          <li key={issue.ruleId} className="text-[11.5px] leading-[1.7] text-slate-300">
+            <span className="font-mono text-rose-200">{issue.ruleId}</span>{' '}
+            {issue.message}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2.5 text-[11.5px] leading-[1.7] text-slate-400">
+        以上结论由规则引擎判定，不由模型给出。
+      </p>
     </div>
   );
 }
@@ -200,6 +229,10 @@ export function AiConsole({
       </div>
 
       <div className="min-h-[132px]">
+        {!running && presentation && (
+          <RuleVerdictBand issues={presentation.result.ruleIssues} />
+        )}
+
         {running && (
           <div className="flex items-center gap-2 rounded-xl border border-brand-300/20 bg-brand-300/8 p-4 text-[12.5px] text-brand-100">
             <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />

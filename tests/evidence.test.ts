@@ -53,6 +53,18 @@ describe('evidence allowlists', () => {
     }
   });
 
+  // The assistant cites the rule it relied on once it is given the verdict.
+  it('allows a real rule id to be cited as evidence', () => {
+    for (const rule of ruleCatalog) {
+      expect(validEvidenceRefs.has(rule.id)).toBe(true);
+    }
+  });
+
+  it('still rejects a fabricated rule id before the evidence check runs', () => {
+    expect(validEvidenceRefs.has('VENUE-RULE-999')).toBe(false);
+    expect(validRuleIds.has('VENUE-RULE-999')).toBe(false);
+  });
+
   it('allows every seeded knowledge document to be cited', () => {
     for (const document of demoKnowledge) {
       expect(validEvidenceRefs.has(document.id)).toBe(true);

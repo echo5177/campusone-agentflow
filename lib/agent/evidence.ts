@@ -12,6 +12,13 @@ export const validRuleIds = new Set<string>(ruleCatalog.map((rule) => rule.id));
 
 export const validEvidenceRefs = new Set<string>([
   'FORM-SCHEMA-1.2',
+  // A rule id is a real, checkable identifier, so citing one is a good citation.
+  // Leaving them off the list rejected correct answers: once the assistant was
+  // given the deterministic verdict it naturally cited VENUE-CAP-001 as its
+  // basis. This does not soften the fabricated-rule demo — validateAgentOutput
+  // scans the whole output against validRuleIds before it ever reaches here, so
+  // VENUE-RULE-999 still fails as RULE_NOT_FOUND.
+  ...ruleCatalog.map((rule) => rule.id),
   ...venueApplicationFields.map((field) => `FORM:${field}`),
   ...demoVenues.flatMap((venue) => [
     `VENUE:${venue.id}:capacity`,

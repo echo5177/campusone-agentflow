@@ -11,6 +11,13 @@ export type AgentTaskType = (typeof agentTaskTypes)[number];
 /** A knowledge document the task was allowed to read, echoed back for the UI. */
 export type CitedKnowledge = { id: string; title: string; source: string };
 
+/**
+ * Rules that failed at the moment of the run. Returned so the interface can put
+ * the deterministic verdict next to the model's prose: compliance is decided by
+ * the rule engine, never by the assistant.
+ */
+export type RuleIssue = { ruleId: string; label: string; message: string };
+
 export type AgentRunResult<T> =
   | {
       ok: true;
@@ -19,6 +26,7 @@ export type AgentRunResult<T> =
       model: string;
       mode: 'mock' | 'live';
       knowledge: CitedKnowledge[];
+      ruleIssues: RuleIssue[];
     }
   | {
       ok: false;
@@ -28,4 +36,5 @@ export type AgentRunResult<T> =
       model: string;
       mode: 'mock' | 'live';
       knowledge: CitedKnowledge[];
+      ruleIssues: RuleIssue[];
     };
