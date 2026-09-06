@@ -12,6 +12,7 @@ import type {
 } from '@/lib/domain/types';
 
 export type DemoSnapshot = {
+  demoPersistence?: 'local' | 'memory';
   case: {
     id: string;
     status: CaseStatus;

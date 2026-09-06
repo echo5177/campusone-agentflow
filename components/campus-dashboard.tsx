@@ -1,5 +1,8 @@
 'use client';
 
+import { isStaticDemo } from '@/lib/client/api';
+
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -327,7 +330,9 @@ export function CampusDashboard() {
       setAiPresentation(null);
       setNotice({
         tone: 'success',
-        text: `当前操作身份已切换为“${roleLabels[next.role]}”。后端只承认这个身份，请求体里的角色字段会被忽略。`,
+        text: isStaticDemo
+          ? `当前演示身份已切换为“${roleLabels[next.role]}”。`
+          : `当前操作身份已切换为“${roleLabels[next.role]}”。后端只承认这个身份，请求体里的角色字段会被忽略。`,
       });
     });
   };
@@ -579,7 +584,7 @@ export function CampusDashboard() {
               ))}
             </fieldset>
             <p className="mt-2 px-1.5 text-[11.5px] leading-[1.7] text-slate-500">
-              演示专用入口。业务接口只认服务端会话，请求体里的角色会被忽略。
+              {isStaticDemo ? '本地角色切换用于体验办理流程。正式接入需使用服务端身份认证。' : '演示专用入口。业务接口只认服务端会话，请求体里的角色会被忽略。'}
             </p>
           </div>
 
@@ -615,7 +620,7 @@ export function CampusDashboard() {
             <div className="flex items-center gap-2">
               <Pill tone="neutral" className="hidden sm:inline-flex">
                 <span className="size-1.5 rounded-full bg-pass" />
-                模拟数据
+                {isStaticDemo ? 'Mock 演示' : '模拟数据'}
               </Pill>
               <Pill tone="neutral" className="hidden md:inline-flex">
                 审计 <span data-numeric>{snapshot.events.length}</span>
@@ -628,6 +633,16 @@ export function CampusDashboard() {
         </header>
 
         <main className="mx-auto max-w-[1280px] px-5 py-6 sm:px-7">
+          {isStaticDemo && (
+            <p className="mb-5 text-[12px] leading-relaxed text-muted-foreground">
+              <strong className="font-medium text-foreground">GitHub Pages · Mock 演示</strong>
+              {' · 无需 API Key。'}
+              {snapshot.demoPersistence === 'memory'
+                ? '浏览器未允许本地存储，刷新后演示将重置。'
+                : '数据仅保存在本浏览器，重置演示可清除。'}
+              {'申请与审批均为流程模拟。'}
+            </p>
+          )}
           {notice && (
             <output
               className={`rise-in mb-5 w-full flex items-start gap-2.5 rounded-xl border px-4 py-3 text-[13px] leading-[1.7] ${

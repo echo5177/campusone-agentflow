@@ -1,5 +1,8 @@
 'use client';
 
+import { isStaticDemo } from '@/lib/client/api';
+
+
 import { CheckCircle2, ShieldCheck } from 'lucide-react';
 
 import { EmptyState, Panel, Pill, ViewHeader, formatDateTime } from './primitives';
@@ -33,7 +36,7 @@ export function EvidenceView({ snapshot }: { snapshot: DemoSnapshot }) {
     <div className="space-y-5">
       <ViewHeader
         title="AI 运行证据"
-        description="每一次模型调用都留痕：任务、提示词版本、模型、耗时、验证状态与错误码。被拦下的输出同样保留，用来证明校验真的发生过。不保存 API Key。"
+        description={isStaticDemo ? "记录本地 Mock 的任务、模板版本、处理耗时、验证状态与错误码。被拦下的输出也会留下记录，方便查看校验效果。" : "每一次模型调用都留痕：任务、提示词版本、模型、耗时、验证状态与错误码。被拦下的输出同样保留，用来证明校验真的发生过。不保存 API Key。"}
         actions={
           <div className="flex gap-2">
             <Pill tone="active">
@@ -104,7 +107,7 @@ export function EvidenceView({ snapshot }: { snapshot: DemoSnapshot }) {
 
       <Panel
         title="可信控制状态"
-        description="正式状态只由后端规则与人工操作改变。"
+        description={isStaticDemo ? "演示状态由本地规则与人工操作改变。记录保存在浏览器，可通过重置清除。" : "正式状态只由后端规则与人工操作改变。"}
       >
         <div className="grid gap-2.5 sm:grid-cols-2">
           {controls.map((control) => (

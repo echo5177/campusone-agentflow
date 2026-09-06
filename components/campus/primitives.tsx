@@ -36,12 +36,7 @@ export function formatSlot(startTime: string, endTime: string) {
   return `${day} ${formatClock(startTime)}–${formatClock(endTime)}`;
 }
 
-export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const payload = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? `HTTP_${response.status}`);
-  return payload;
-}
+export { fetchJson } from '@/lib/client/api';
 
 /** Adds the campus offset the API expects to a `datetime-local` value. */
 export function applicationForRequest<T extends { startTime: string; endTime: string }>(

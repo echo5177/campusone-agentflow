@@ -1,5 +1,8 @@
 'use client';
 
+import { isStaticDemo } from '@/lib/client/api';
+
+
 import {
   AlertTriangle,
   Building2,
@@ -224,7 +227,7 @@ export function AiConsole({
           ))}
         </NativeSelect>
         <p className="mt-2.5 text-[11.5px] leading-[1.75] text-slate-400">
-          真实模型模式下同样生效：先真实调用，再注入故障，拒绝理由和耗时都是真实测量值。
+          {isStaticDemo ? '对本地 Mock 输出注入故障，再执行结构、规则和证据校验；记录本次处理耗时。' : '真实模型模式下同样生效：先真实调用，再注入故障，拒绝理由和耗时都是真实测量值。'}
         </p>
       </div>
 

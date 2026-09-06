@@ -1,5 +1,8 @@
 'use client';
 
+import { isStaticDemo } from '@/lib/client/api';
+
+
 import {
   CheckCircle2,
   ClipboardCheck,
@@ -213,7 +216,7 @@ export function WorkflowView({
             ? '请填写可核验的事实。AI 建议必须经你确认后才会写入。'
             : status === 'draft'
               ? '草稿只能由申请人本人编辑。'
-              : '当前版本已锁定；正式状态只由角色权限和后端状态机改变。'
+              : isStaticDemo ? '当前版本已锁定；可切换演示角色继续办理。' : '当前版本已锁定；正式状态只由角色权限和后端状态机改变。'
         }
         aside={<Pill tone={meta.tone}>{meta.label} · V{snapshot.case.currentVersion}</Pill>}
       >

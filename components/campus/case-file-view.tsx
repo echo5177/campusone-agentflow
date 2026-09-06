@@ -1,5 +1,8 @@
 'use client';
 
+import { isStaticDemo } from '@/lib/client/api';
+
+
 import { useState } from 'react';
 import { ArrowRight, CircleDashed, MessageSquareText } from 'lucide-react';
 
@@ -73,7 +76,7 @@ export function CaseFileView({ snapshot }: { snapshot: DemoSnapshot }) {
     <div className="space-y-5">
       <ViewHeader
         title="事务档案"
-        description="每一次状态变化都带着操作角色、前后状态和服务端推导的幂等键写入后端；退回后的修订生成新版本，旧版本不被覆盖。"
+        description={isStaticDemo ? "本地保存操作角色、前后状态和退回意见；修订生成新版本，保留旧版本供对比。此处为流程演示记录。" : "每一次状态变化都带着操作角色、前后状态和服务端推导的幂等键写入后端；退回后的修订生成新版本，旧版本不被覆盖。"}
         actions={
           <div className="flex gap-2">
             <Pill tone="active">

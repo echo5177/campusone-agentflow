@@ -2,7 +2,8 @@
 
 CampusOne 是一款面向高校场地申请的可信事务智能体。它把固定表单、确定性规则、知识依据、大模型辅助、人工审批和事务时间轴放在同一个可演示闭环中。
 
-- 私有演示站点：<https://campusone-agentflow.atticus-5951.chatgpt.site>
+- GitHub Pages（无需密钥的 Mock 演示）：<https://echo5177.github.io/campusone-agentflow/>，参见 [部署与使用说明](docs/github-pages.md)。
+- 服务端演示站点：<https://campusone-agentflow.atticus-5951.chatgpt.site>
 - 比赛交付物：`deliverables/`
 - 单一身份配置：`competition.config.json`（厦门大学；胡博（队长）、温广琛、许佳锋；指导教师张盈谦；邮箱待补）
 - 长期约定：`docs/project-context.md`（团队身份、初赛材料定位与 PPT 审美偏好）

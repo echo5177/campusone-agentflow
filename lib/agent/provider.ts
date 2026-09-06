@@ -24,7 +24,7 @@ import type {
 } from './types';
 import { AgentValidationError, validateAgentOutput } from './validator';
 import { getKnowledgeByIds, recordAiRun } from '@/lib/server/store';
-import { missingRequiredFields } from '@/lib/domain/rules';
+import { buildFormMock, buildReviewMock, buildReturnMock } from './mock-outputs';
 import type { ValidationResult, VenueApplication } from '@/lib/domain/types';
 
 export type { FaultMode } from './types';
@@ -305,28 +305,11 @@ export async function runFormAssist(
   validation: ValidationResult,
   faultMode: FaultMode = 'none',
 ) {
-  // Same source as VENUE-REQ-001, so the assistant cannot report a different
-  // set of gaps than the rule that will block the submission.
-  const missingFields = missingRequiredFields(application).map(({ field }) => field);
   return runAgentTask<FormAssistOutput>({
     taskType: 'form_assist',
     promptVersion: 'form-assist-1.1',
     schema: formAssistSchema,
-    buildMockOutput: (knowledge) =>
-      ({
-        taskType: 'form_assist',
-        suggestedDescription: application.description
-          ? `${application.description.replace(/[。\s]+$/, '')}。活动将按照场地管理要求组织入场、设备使用与结束后的场地恢复。`
-          : null,
-        missingFields,
-        explanation:
-          '仅整理申请人已经提供的活动事实，并提示缺项；是否满足场地规则由规则引擎判定，本建议不作合规结论。',
-        evidenceRefs: [
-          'FORM:description',
-          ...knowledge.map((document) => document.id),
-        ],
-        requiresUserConfirmation: true,
-      }) satisfies FormAssistOutput,
+    buildMockOutput: (knowledge) => buildFormMock(application, knowledge),
     verifiedContext: { application, validation },
     knowledgeIds: selectKnowledgeIds({ taskType: 'form_assist', application }),
     faultMode,
@@ -341,27 +324,7 @@ export async function runReviewBrief(
   validation: ValidationResult,
   faultMode: FaultMode = 'none',
 ) {
-  const passedRules = validation.results
-    .filter((item) => item.passed)
-    .map((item) => ({ ruleId: item.ruleId, evidenceRefs: item.evidenceRefs }));
-  const failedRules = validation.results
-    .filter((item) => !item.passed)
-    .map((item) => ({ ruleId: item.ruleId, evidenceRefs: item.evidenceRefs }));
-  const buildMockOutput = () =>
-    ({
-      taskType: 'review_brief',
-      caseSummary: `${application.organization}申请使用场地举办“${application.activityName}”，预计 ${application.attendees} 人。`,
-      passedRules,
-      failedRules,
-      missingInformation: failedRules.length
-        ? ['请根据未通过规则补充或修正申请信息。']
-        : [],
-      humanJudgementItems:
-        application.attendees >= 96
-          ? ['预计人数达到场地容量的 80%，请人工复核秩序维护安排。']
-          : ['请人工确认现场联系人和活动内容与实际一致。'],
-      requiresHumanReview: true,
-    }) satisfies ReviewBriefOutput;
+  const buildMockOutput = () => buildReviewMock(application, validation);
 
   return runAgentTask<ReviewBriefOutput>({
     taskType: 'review_brief',
@@ -392,7 +355,6 @@ export async function runReturnMessageDraft(
   returnContext: ReturnContext,
   faultMode: FaultMode = 'none',
 ) {
-  const failed = validation.results.filter((item) => !item.passed);
   const reason = returnContext.returnReason;
   // The applicant's instruction is the reviewer's own words. If the model is
   // rejected the fallback still carries them, so the notice is never empty of
@@ -401,24 +363,7 @@ export async function runReturnMessageDraft(
     ? `AI 草稿未通过校验，已安全丢弃。管理员填写的退回意见为：“${reason}”。请据此修改后创建修订版本重新提交。`
     : undefined;
   const buildMockOutput = (knowledge: KnowledgeSnippet[]) =>
-    ({
-      taskType: 'return_message_draft',
-      message: `你提交的“${application.activityName}”已被退回，需要修改后重新提交。原申请版本将保留。`,
-      requiredActions: [
-        ...(reason ? [`管理员退回意见：${reason}`] : []),
-        ...failed.map((item) => `${item.ruleId}：${item.message}`),
-        ...(reason || failed.length
-          ? []
-          : ['请补充管理员在人工审核中说明的材料。']),
-      ],
-      evidenceRefs: [
-        ...new Set([
-          ...failed.flatMap((item) => item.evidenceRefs),
-          ...knowledge.map((document) => document.id),
-        ]),
-      ],
-      requiresHumanConfirmation: true,
-    }) satisfies ReturnMessageOutput;
+    buildReturnMock(application, validation, reason, knowledge);
 
   return runAgentTask<ReturnMessageOutput>({
     taskType: 'return_message_draft',
