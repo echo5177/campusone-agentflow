@@ -118,6 +118,33 @@ def _fixed(table) -> None:
 
 
 def _widths(table, widths_cm: list[float]) -> None:
+    """Sets cell widths and the table grid together.
+
+    python-docx leaves tblGrid at its equal-column default. With a fixed layout
+    Word then has two disagreeing sources for the column positions and resolves
+    it by widening the table: a three-column block declared at 17cm rendered at
+    19.2cm and ran off the right margin. Writing the grid removes the conflict.
+    """
+    twips = [int(round(width * 567)) for width in widths_cm]
+    grid = table._tbl.find(qn("w:tblGrid"))
+    if grid is None:
+        grid = OxmlElement("w:tblGrid")
+        table._tbl.insert(1, grid)
+    for existing in grid.findall(qn("w:gridCol")):
+        grid.remove(existing)
+    for value in twips:
+        col = OxmlElement("w:gridCol")
+        col.set(qn("w:w"), str(value))
+        grid.append(col)
+
+    tbl_pr = table._tbl.tblPr
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), str(sum(twips)))
+    tbl_w.set(qn("w:type"), "dxa")
+
     for row in table.rows:
         for idx, width in enumerate(widths_cm):
             cell = row.cells[idx]
@@ -422,6 +449,9 @@ def table_block(doc, headers, rows, widths, size=8.8, mono_cols=(), after=8) -> 
                 mono=is_mono,
                 light=not is_mono,
             )
+    # Re-applied now that the data rows exist; the first call only reached the
+    # header row, leaving the rest on python-docx's default equal columns.
+    _widths(table, widths)
     for row in table.rows:
         for cell in row.cells:
             _borders(
@@ -605,8 +635,8 @@ def build_summary() -> Path:
         "2026 年 9 月 · 初赛提交版",
         "大模型负责读懂和表述，程序负责判定事实与规则，人负责最终决定。三者的边界写在代码里，可以现场验证。",
         [
-            ("6", "确定性规则", "容量、时段、开放时间等"),
-            ("96", "自动化测试", "覆盖 T01–T21 全部用例"),
+            ("6", "确定性规则", "容量、时段与开放时间"),
+            ("105", "自动化测试", "覆盖 T01–T21 用例"),
             ("3", "受约束 AI 任务", "均不可改变正式状态"),
         ],
     )
@@ -674,7 +704,7 @@ def build_summary() -> Path:
                    "初赛交付一个能跑也能查的系统；复赛推进真实接入。", new_page=False)
     table_block(doc, ["交付物", "状态", "说明"], [
         ["Web 应用", "完成", "四视图工作台，可一键重置"],
-        ["源代码与自动化测试", "完成", "96 项测试，lint 与构建通过"],
+        ["源代码与自动化测试", "完成", "105 项测试，lint 与构建通过"],
         ["私有演示部署", "完成", "可切换真实模型与本地模式"],
         ["方案书 / PPT / 演示视频", "完成", "视频由团队真人讲解实机操作"],
         ["接入学校真实系统", "后续", "需授权后对接统一身份与场地数据"],
@@ -874,7 +904,7 @@ def build_proposal() -> Path:
     # 08
     section_opener(doc, "08", "测试方案",
                    "先定义每条用例要证明什么，再写测试，最后对着运行中的系统复验。")
-    body(doc, "自动化测试共 96 项，覆盖下表 21 条用例。除此之外，涉及真实模型行为的部分"
+    body(doc, "自动化测试共 105 项，覆盖下表 21 条用例。除此之外，涉及真实模型行为的部分"
               "无法用单元测试断言，改为对运行中的服务实测并记录结果。")
     table_block(doc, ["编号", "场景", "预期"], [
         ["T01–T04", "正常申请、超容量、时间倒置、时段冲突", "规则逐条给出判定与证据"],
@@ -896,7 +926,7 @@ def build_proposal() -> Path:
     section_opener(doc, "09", "测试结果",
                    "以下均为实测记录；没有测过的指标不写。")
     stat_cards(doc, [
-        ("96", "自动化测试", "全部通过"),
+        ("105", "自动化测试", "全部通过"),
         ("9", "闭环事件", "一次退回与修订"),
         ("0", "高危依赖", "Critical / High"),
     ])
@@ -954,7 +984,7 @@ def build_proposal() -> Path:
         ["项目简介 PPT", "完成", "不超过 20 页"],
         ["3 至 5 分钟演示视频", "待录制", "由团队真人讲解实机操作"],
         ["可访问演示站点", "完成", "模拟数据，可一键重置"],
-        ["源代码与测试", "完成", "96 项测试、lint 与生产构建通过"],
+        ["源代码与测试", "完成", "105 项测试、lint 与生产构建通过"],
     ], [5.6, 2.4, 9.0], 8.8)
     callout(doc, "信息声明",
             "本方案所有场地、制度与申请数据均为模拟数据。文中每一项实测结果都可在演示站点复现；"
